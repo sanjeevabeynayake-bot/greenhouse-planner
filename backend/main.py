@@ -36,7 +36,6 @@ def save_data(data):
         json.dump(data, f, indent=2)
 
 def normalise_gh(gh):
-    """Always return a dict with id, name, cropTypes"""
     if isinstance(gh, str):
         return {"id": gh, "name": gh, "cropTypes": []}
     return {
@@ -44,11 +43,6 @@ def normalise_gh(gh):
         "name": gh.get("name", gh.get("id", "")),
         "cropTypes": gh.get("cropTypes", [])
     }
-
-def get_gh_name(gh):
-    if isinstance(gh, str):
-        return gh
-    return gh.get("name", gh.get("id", ""))
 
 def calc_versatility(s, activities, gh_names, all_crops):
     if not activities or not gh_names:
@@ -59,8 +53,6 @@ def calc_versatility(s, activities, gh_names, all_crops):
     return round((a + g + c) / 3 * 100)
 
 def build_absence_map(absences, days):
-    """Returns {staff_id: {day: hours_available}}
-    0 = fully absent, positive number = partial hours"""
     absence_map = {}
     for day in days:
         entries = absences.get(day, [])
@@ -95,21 +87,38 @@ def build_staff_availability(staff, absences, days):
                 availability[sid][day] = normal
     return availability
 
+def calc_schedule_summary(schedule, total_capacity, total_demand):
+    shortfalls = {}
+    total_assigned = 0
+    total_unassigned = 0
+    for day_list in schedule.values():
+        for a in day_list:
+            if a.get("unassigned"):
+                total_unassigned += a["hours"]
+                key = f"{a['greenhouse']}|{a['activity']}"
+                if key not in shortfalls:
+                    shortfalls[key] = {"gh": a["greenhouse"], "activity": a["activity"], "hours": 0}
+                shortfalls[key]["hours"] += a["hours"]
+            else:
+                total_assigned += a["hours"]
+    return {
+        "totalDemand": total_demand,
+        "totalCapacity": total_capacity,
+        "totalAssigned": total_assigned,
+        "totalUnassigned": total_unassigned,
+        "shortfallByActivity": list(shortfalls.values()),
+        "surplusHours": max(0, total_capacity - total_demand),
+        "shortfallHours": max(0, total_demand - total_capacity)
+    }
+
 def run_optimiser(staff, greenhouses, activities, demand, absences, clusters, tolerance):
     days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
-
-    # Normalise all greenhouses to dicts
     ghs = [normalise_gh(g) for g in greenhouses]
     gh_names = [g["name"] for g in ghs]
-
-    # Build greenhouse lookup by name
     gh_lookup = {g["name"]: g for g in ghs}
-
-    # Build all crop types from greenhouses
     all_crops = list(set(ct for g in ghs for ct in g.get("cropTypes", [])))
 
-    # Build cluster lookup
-    cluster_map = {}  # cluster_name -> list of gh names
+    cluster_map = {}
     clustered_ghs = set()
     for c in clusters:
         cname = c.get("name", "")
@@ -119,43 +128,31 @@ def run_optimiser(staff, greenhouses, activities, demand, absences, clusters, to
             clustered_ghs.add(gh)
 
     def get_gh_clusters(gh_name):
-        """Return list of cluster names this gh belongs to"""
         return [cn for cn, cghs in cluster_map.items() if gh_name in cghs]
 
     def can_move(staff_gh, new_gh):
-        """Check if staff can move from staff_gh to new_gh based on clusters"""
         if tolerance == 0:
-            return True  # Pure optimisation - no cluster constraints
+            return True
         if staff_gh is None:
-            return True  # First assignment of the day
+            return True
         if staff_gh == new_gh:
-            return True  # Same greenhouse
-        
+            return True
         staff_clusters = set(get_gh_clusters(staff_gh))
         new_clusters = set(get_gh_clusters(new_gh))
-        
-        # Both independent - cannot combine
         if not staff_clusters and not new_clusters:
             return False
-        # One independent, one clustered - cannot combine
         if not staff_clusters or not new_clusters:
             return False
-        # Check if they share any cluster (overlap)
         if staff_clusters & new_clusters:
             return True
         return False
 
-    # Calculate versatility for each staff
     for s in staff:
         s["_v"] = calc_versatility(s, activities, gh_names, all_crops)
 
-    # Sort by versatility descending
     staff_sorted = sorted(staff, key=lambda s: s["_v"], reverse=True)
-
-    # Build staff availability
     availability = build_staff_availability(staff, absences, days)
 
-    # Build demand tasks
     tasks = []
     for gh_name, acts in demand.items():
         if gh_name not in gh_lookup:
@@ -172,12 +169,9 @@ def run_optimiser(staff, greenhouses, activities, demand, absences, clusters, to
                     "gh_crops": gh_crops
                 })
 
-    # Track hours used and current greenhouse per staff per day
     hours_used = {s["id"]: {d: 0 for d in days} for s in staff}
     staff_day_gh = {s["id"]: {d: None for d in days} for s in staff}
-
     result = {day: [] for day in days}
-    shortfalls = {}
 
     for task in tasks:
         gh = task["gh"]
@@ -185,7 +179,6 @@ def run_optimiser(staff, greenhouses, activities, demand, absences, clusters, to
         weekly_hours = task["weekly_hours"]
         gh_crops = task["gh_crops"]
 
-        # Distribute weekly hours across days evenly
         base = weekly_hours // 5
         remainder = weekly_hours % 5
         hours_per_day = {}
@@ -196,10 +189,8 @@ def run_optimiser(staff, greenhouses, activities, demand, absences, clusters, to
             needed = hours_per_day[day]
             if needed <= 0:
                 continue
-
             remaining = needed
 
-            # Find eligible staff - with cluster constraint
             def get_eligible(ignore_cluster=False):
                 eligible = []
                 for s in staff_sorted:
@@ -210,18 +201,14 @@ def run_optimiser(staff, greenhouses, activities, demand, absences, clusters, to
                     used = hours_used[sid][day]
                     if used >= avail:
                         continue
-                    # Activity check
                     if activity not in s.get("activities", []):
                         continue
-                    # Greenhouse eligibility check
                     if gh not in s.get("greenhouses", []):
                         continue
-                    # Crop type check
                     if gh_crops:
                         staff_crops = s.get("cropTypes", [])
                         if not any(ct in staff_crops for ct in gh_crops):
                             continue
-                    # Cluster constraint
                     if not ignore_cluster and tolerance > 0:
                         current_gh = staff_day_gh[sid][day]
                         if not can_move(current_gh, gh):
@@ -230,13 +217,9 @@ def run_optimiser(staff, greenhouses, activities, demand, absences, clusters, to
                 return eligible
 
             eligible = get_eligible(ignore_cluster=False)
-
-            # If tolerance > 0 and no eligible found with cluster constraint,
-            # check if releasing constraint improves coverage significantly
             if not eligible and tolerance > 0:
                 eligible = get_eligible(ignore_cluster=True)
 
-            # Assign hours
             for s in eligible:
                 if remaining <= 0:
                     break
@@ -262,10 +245,6 @@ def run_optimiser(staff, greenhouses, activities, demand, absences, clusters, to
                 remaining -= assign
 
             if remaining > 0:
-                key = f"{gh}|{activity}"
-                if key not in shortfalls:
-                    shortfalls[key] = {"gh": gh, "activity": activity, "hours": 0}
-                shortfalls[key]["hours"] += remaining
                 result[day].append({
                     "staffId": "UNASSIGNED",
                     "staffName": f"{remaining}h unassigned - capacity exceeded",
@@ -276,31 +255,12 @@ def run_optimiser(staff, greenhouses, activities, demand, absences, clusters, to
                     "reoptimised": False
                 })
 
-    # Calculate summary
     total_demand = sum(t["weekly_hours"] for t in tasks)
     total_capacity = sum(
         sum(availability[s["id"]][d] for d in days)
         for s in staff
     )
-    total_assigned = sum(
-        a["hours"] for day_list in result.values()
-        for a in day_list if not a["unassigned"]
-    )
-    total_unassigned = sum(
-        a["hours"] for day_list in result.values()
-        for a in day_list if a["unassigned"]
-    )
-
-    summary = {
-        "totalDemand": total_demand,
-        "totalCapacity": total_capacity,
-        "totalAssigned": total_assigned,
-        "totalUnassigned": total_unassigned,
-        "shortfallByActivity": list(shortfalls.values()),
-        "surplusHours": max(0, total_capacity - total_demand),
-        "shortfallHours": max(0, total_demand - total_capacity)
-    }
-
+    summary = calc_schedule_summary(result, total_capacity, total_demand)
     return result, summary
 
 @app.get("/")
@@ -313,7 +273,6 @@ def get_data():
 
 @app.post("/data")
 def post_data(payload: dict):
-    # Normalise greenhouses before saving
     if "greenhouses" in payload:
         payload["greenhouses"] = [normalise_gh(g) for g in payload["greenhouses"]]
     save_data(payload)
@@ -329,14 +288,11 @@ def optimise(payload: dict):
         absences = payload.get("absences", {})
         clusters = payload.get("clusters", [])
         tolerance = payload.get("tolerance", 5)
-
         schedule, summary = run_optimiser(
             staff, greenhouses, activities,
             demand, absences, clusters, tolerance
         )
-
         return {"schedule": schedule, "summary": summary}
-
     except Exception as e:
         import traceback
         return {
@@ -361,22 +317,16 @@ def reoptimise(payload: dict):
         tolerance = payload.get("tolerance", 5)
 
         days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
-
-        # Normalise greenhouses
         ghs = [normalise_gh(g) for g in greenhouses]
         gh_lookup = {g["name"]: g for g in ghs}
         gh_names = [g["name"] for g in ghs]
         all_crops = list(set(ct for g in ghs for ct in g.get("cropTypes", [])))
 
-        # Calculate versatility
         for s in staff:
             s["_v"] = calc_versatility(s, activities, gh_names, all_crops)
         staff_sorted = sorted(staff, key=lambda s: s["_v"], reverse=True)
-
-        # Build availability with new absences
         availability = build_staff_availability(staff, absences, days)
 
-        # Separate affected from unaffected assignments
         new_schedule = {}
         affected_tasks = []
 
@@ -395,7 +345,6 @@ def reoptimise(payload: dict):
                 new_schedule[day] = [a for a in day_assignments
                                     if not a.get("unassigned")]
 
-        # Build hours used from unaffected assignments
         hours_used = {s["id"]: {d: 0 for d in days} for s in staff}
         staff_day_gh = {s["id"]: {d: None for d in days} for s in staff}
 
@@ -407,7 +356,6 @@ def reoptimise(payload: dict):
                     if staff_day_gh[sid][day] is None:
                         staff_day_gh[sid][day] = a.get("greenhouse")
 
-        # Re-assign affected tasks
         for task in affected_tasks:
             day = task["day"]
             gh = task["greenhouse"]
@@ -466,9 +414,20 @@ def reoptimise(payload: dict):
                     "reoptimised": True
                 })
 
+        total_demand = sum(
+            int(hours) for acts in demand.values()
+            for hours in acts.values() if hours
+        )
+        total_capacity = sum(
+            sum(availability[s["id"]][d] for d in days)
+            for s in staff
+        )
+        summary = calc_schedule_summary(new_schedule, total_capacity, total_demand)
+
         return {
             "schedule": new_schedule,
-            "affectedTasks": len(affected_tasks)
+            "affectedTasks": len(affected_tasks),
+            "summary": summary
         }
 
     except Exception as e:
