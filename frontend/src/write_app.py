@@ -1,7 +1,6 @@
 code = r'''import React, { useState, useEffect } from "react";
 import axios from "axios";
-
-const API = "http://127.0.0.1:8000";
+const API = "https://greenhouse-planner-backend.onrender.com";
 const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday"];
 const DEFAULT_ACTIVITIES = ["Planting","Watering & Irrigation","Fertilizing","De-leafing & Pruning","Harvesting","Pest & Disease Control","Soil & Media Preparation","Transplanting","Trellising & Training","Climate Control","Quality Inspection","Packaging & Grading","Cleaning & Sanitation","Equipment Maintenance","Crop Monitoring"];
 const DEFAULT_GHS = Array.from({length:30},(_,i)=>({id:`GH-${String(i+1).padStart(2,"0")}`,name:`GH-${String(i+1).padStart(2,"0")}`,cropTypes:[]}));
