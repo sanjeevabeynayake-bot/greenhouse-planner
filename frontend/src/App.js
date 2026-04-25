@@ -104,7 +104,14 @@ export default function App() {
       });
       if(res.data.schedule){
         setSchedule(res.data.schedule);
-        alert(`Done. ${res.data.affectedTasks} assignments reoptimised with minimum disruption.`);
+        if(res.data.summary){
+          setScheduleSummary(res.data.summary);
+        }
+        const unassigned = res.data.summary?.totalUnassigned || 0;
+        const msg = unassigned > 0
+          ? `Done. ${res.data.affectedTasks} reoptimised. ⚠️ ${unassigned}h still unassigned - check red rows.`
+          : `Done. ${res.data.affectedTasks} assignments reoptimised with no gaps.`;
+        alert(msg);
       }
     } catch(e){ alert("Error: "+e.message); }
     setGenerating(false);
