@@ -153,7 +153,7 @@ export default function App() {
     </div>
   );
 
-  const tabOrder = ["dashboard","staff",...(role==="gm"?["demand"]:[]),"schedule","absence","edit"];
+ const tabOrder = ["dashboard","staff","demand","schedule","absence","edit"];
 
   return (
     <div style={{background:"#f0f4f8",minHeight:"100vh",fontFamily:"Arial,sans-serif"}}>
@@ -329,7 +329,7 @@ export default function App() {
           </div>
         )}
 
-        {page==="demand" && role==="gm" && (
+        {page==="demand" && (
           <div>
             <h2 style={{color:"#1a5276"}}>Weekly Demand Entry</h2>
             {scheduleStale && <div style={{background:"#fff3cd",border:"1px solid #ffc107",borderRadius:"6px",padding:"10px",marginBottom:"15px",fontSize:"13px",color:"#856404"}}>⚠️ Demand has changed since last schedule generation. Regenerate to update.</div>}
