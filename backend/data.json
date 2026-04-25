@@ -1,0 +1,1655 @@
+{
+  "staff": [
+    {
+      "id": "1",
+      "name": "A",
+      "hoursPerDay": 7,
+      "dayHours": {},
+      "overtimeLimit": 5,
+      "activities": [
+        "Planting",
+        "Watering & Irrigation",
+        "Fertilizing",
+        "Transplanting",
+        "De-leafing & Pruning",
+        "Soil & Media Preparation",
+        "Quality Inspection",
+        "Cleaning & Sanitation",
+        "Trellising & Training"
+      ],
+      "greenhouses": [
+        "main green house ",
+        "GH-02",
+        "Main road GH "
+      ],
+      "cropTypes": [
+        "Tomato Standard",
+        "Tomato Cherry",
+        "Cucumber Standard",
+        "Cucumber Mini"
+      ],
+      "versatility": 0
+    },
+    {
+      "id": "2",
+      "name": "B",
+      "hoursPerDay": 7,
+      "dayHours": {},
+      "overtimeLimit": 5,
+      "activities": [
+        "Planting",
+        "Watering & Irrigation",
+        "Fertilizing",
+        "De-leafing & Pruning",
+        "Harvesting",
+        "Pest & Disease Control",
+        "Soil & Media Preparation",
+        "Transplanting",
+        "Trellising & Training",
+        "Climate Control",
+        "Packaging & Grading",
+        "Cleaning & Sanitation",
+        "Equipment Maintenance",
+        "Quality Inspection",
+        "Crop Monitoring"
+      ],
+      "greenhouses": [
+        "main green house ",
+        "GH-02",
+        "GH-03",
+        "Main road GH "
+      ],
+      "cropTypes": [
+        "Tomato Standard",
+        "Tomato Cherry",
+        "Cucumber Standard",
+        "Cucumber Mini",
+        "Other"
+      ],
+      "versatility": 0
+    },
+    {
+      "id": "3",
+      "name": "C",
+      "hoursPerDay": 7,
+      "dayHours": {},
+      "overtimeLimit": 5,
+      "activities": [
+        "Planting",
+        "Pest & Disease Control",
+        "Climate Control",
+        "Equipment Maintenance",
+        "Quality Inspection",
+        "Crop Monitoring",
+        "Packaging & Grading",
+        "Transplanting"
+      ],
+      "greenhouses": [
+        "Main road GH ",
+        "GH-03",
+        "GH-02"
+      ],
+      "cropTypes": [
+        "Tomato Standard",
+        "Tomato Cherry",
+        "Cucumber Standard",
+        "Cucumber Mini",
+        "Other"
+      ],
+      "versatility": 0
+    },
+    {
+      "id": "4",
+      "name": "D",
+      "hoursPerDay": 7,
+      "dayHours": {},
+      "overtimeLimit": 5,
+      "activities": [
+        "Planting",
+        "Pest & Disease Control",
+        "Climate Control",
+        "Soil & Media Preparation",
+        "Quality Inspection",
+        "Packaging & Grading",
+        "Crop Monitoring",
+        "Equipment Maintenance",
+        "Watering & Irrigation",
+        "Cleaning & Sanitation",
+        "Trellising & Training"
+      ],
+      "greenhouses": [
+        "main green house ",
+        "GH-02",
+        "GH-03",
+        "Main road GH "
+      ],
+      "cropTypes": [
+        "Tomato Standard",
+        "Tomato Cherry",
+        "Cucumber Standard",
+        "Cucumber Mini"
+      ],
+      "versatility": 0
+    },
+    {
+      "id": "5",
+      "name": "E",
+      "hoursPerDay": 7,
+      "dayHours": {},
+      "overtimeLimit": 5,
+      "activities": [
+        "Planting",
+        "Watering & Irrigation",
+        "Fertilizing",
+        "De-leafing & Pruning",
+        "Harvesting",
+        "Pest & Disease Control",
+        "Climate Control",
+        "Equipment Maintenance",
+        "Quality Inspection",
+        "Soil & Media Preparation",
+        "Crop Monitoring",
+        "Packaging & Grading"
+      ],
+      "greenhouses": [
+        "main green house ",
+        "GH-02",
+        "GH-03",
+        "Main road GH "
+      ],
+      "cropTypes": [
+        "Tomato Standard",
+        "Tomato Cherry",
+        "Cucumber Standard",
+        "Cucumber Mini",
+        "Other"
+      ],
+      "versatility": 0
+    },
+    {
+      "id": "6",
+      "name": "D",
+      "hoursPerDay": 7,
+      "dayHours": {},
+      "overtimeLimit": 5,
+      "activities": [
+        "Planting",
+        "Watering & Irrigation",
+        "Pest & Disease Control",
+        "Climate Control",
+        "Equipment Maintenance",
+        "Soil & Media Preparation",
+        "Quality Inspection",
+        "Crop Monitoring",
+        "Packaging & Grading",
+        "Fertilizing",
+        "De-leafing & Pruning",
+        "Trellising & Training",
+        "Cleaning & Sanitation"
+      ],
+      "greenhouses": [
+        "GH-02",
+        "Main road GH ",
+        "GH-03"
+      ],
+      "cropTypes": [
+        "Tomato Standard",
+        "Tomato Cherry",
+        "Cucumber Standard"
+      ],
+      "versatility": 0
+    },
+    {
+      "id": "7",
+      "name": "Y",
+      "hoursPerDay": 7,
+      "dayHours": {},
+      "overtimeLimit": 5,
+      "activities": [
+        "Planting",
+        "Watering & Irrigation",
+        "Fertilizing",
+        "De-leafing & Pruning",
+        "Harvesting",
+        "Pest & Disease Control",
+        "Climate Control",
+        "Quality Inspection",
+        "Soil & Media Preparation",
+        "Crop Monitoring",
+        "Equipment Maintenance"
+      ],
+      "greenhouses": [
+        "main green house ",
+        "GH-02",
+        "GH-03"
+      ],
+      "cropTypes": [
+        "Tomato Standard",
+        "Tomato Cherry"
+      ],
+      "versatility": 0
+    }
+  ],
+  "greenhouses": [
+    {
+      "id": "main green house ",
+      "name": "main green house ",
+      "cropTypes": [
+        "Tomato Standard"
+      ]
+    },
+    {
+      "id": "GH-02",
+      "name": "GH-02",
+      "cropTypes": [
+        "Tomato Cherry"
+      ]
+    },
+    {
+      "id": "GH-03",
+      "name": "GH-03",
+      "cropTypes": [
+        "Tomato Cherry"
+      ]
+    },
+    {
+      "id": "Main road GH ",
+      "name": "Main road GH ",
+      "cropTypes": [
+        "Cucumber Standard"
+      ]
+    }
+  ],
+  "activities": [
+    "Planting",
+    "Watering & Irrigation",
+    "Fertilizing",
+    "De-leafing & Pruning",
+    "Harvesting",
+    "Pest & Disease Control",
+    "Soil & Media Preparation",
+    "Transplanting",
+    "Trellising & Training",
+    "Climate Control",
+    "Quality Inspection",
+    "Packaging & Grading",
+    "Cleaning & Sanitation",
+    "Equipment Maintenance",
+    "Crop Monitoring"
+  ],
+  "cropTypes": [
+    "Tomato Standard",
+    "Tomato Cherry",
+    "Cucumber Standard",
+    "Cucumber Mini",
+    "Other"
+  ],
+  "clusters": [
+    {
+      "name": "Cluster 1",
+      "greenhouses": []
+    }
+  ],
+  "demand": {
+    "main green house ": {
+      "Planting": 2,
+      "Fertilizing": 20,
+      "Watering & Irrigation": 5,
+      "Harvesting": 5,
+      "Pest & Disease Control": 5,
+      "Soil & Media Preparation": 5,
+      "Transplanting": 3,
+      "Trellising & Training": 3,
+      "Climate Control": 2,
+      "Quality Inspection": 3,
+      "Cleaning & Sanitation": 3,
+      "Packaging & Grading": 5,
+      "Equipment Maintenance": 3
+    },
+    "GH-02": {
+      "Planting": 3,
+      "Soil & Media Preparation": 2,
+      "Climate Control": 1,
+      "Cleaning & Sanitation": 7,
+      "Fertilizing": 4,
+      "Equipment Maintenance": 3
+    },
+    "GH-03": {
+      "Planting": 3,
+      "Pest & Disease Control": 4,
+      "Climate Control": 3,
+      "Packaging & Grading": 2,
+      "Cleaning & Sanitation": 4,
+      "Soil & Media Preparation": 2,
+      "Equipment Maintenance": 10,
+      "Trellising & Training": 5,
+      "Harvesting": 6,
+      "Fertilizing": 7,
+      "Watering & Irrigation": 8,
+      "De-leafing & Pruning": 7
+    },
+    "Main road GH ": {
+      "Harvesting": 3,
+      "Fertilizing": 2,
+      "Trellising & Training": 3,
+      "Quality Inspection": 4,
+      "Equipment Maintenance": 3,
+      "Soil & Media Preparation": 5,
+      "De-leafing & Pruning": 6
+    }
+  },
+  "absences": {},
+  "schedule": {
+    "Monday": [
+      {
+        "staffId": "2",
+        "staffName": "B",
+        "greenhouse": "main green house ",
+        "activity": "Planting",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "2",
+        "staffName": "B",
+        "greenhouse": "main green house ",
+        "activity": "Fertilizing",
+        "hours": 4,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "2",
+        "staffName": "B",
+        "greenhouse": "main green house ",
+        "activity": "Watering & Irrigation",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "2",
+        "staffName": "B",
+        "greenhouse": "main green house ",
+        "activity": "Harvesting",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "5",
+        "staffName": "E",
+        "greenhouse": "main green house ",
+        "activity": "Pest & Disease Control",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "5",
+        "staffName": "E",
+        "greenhouse": "main green house ",
+        "activity": "Soil & Media Preparation",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "1",
+        "staffName": "A",
+        "greenhouse": "main green house ",
+        "activity": "Transplanting",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "4",
+        "staffName": "D",
+        "greenhouse": "main green house ",
+        "activity": "Trellising & Training",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "5",
+        "staffName": "E",
+        "greenhouse": "main green house ",
+        "activity": "Climate Control",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "5",
+        "staffName": "E",
+        "greenhouse": "main green house ",
+        "activity": "Quality Inspection",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "4",
+        "staffName": "D",
+        "greenhouse": "main green house ",
+        "activity": "Cleaning & Sanitation",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "5",
+        "staffName": "E",
+        "greenhouse": "main green house ",
+        "activity": "Packaging & Grading",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "5",
+        "staffName": "E",
+        "greenhouse": "main green house ",
+        "activity": "Equipment Maintenance",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "6",
+        "staffName": "D",
+        "greenhouse": "GH-02",
+        "activity": "Planting",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "6",
+        "staffName": "D",
+        "greenhouse": "GH-02",
+        "activity": "Soil & Media Preparation",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "6",
+        "staffName": "D",
+        "greenhouse": "GH-02",
+        "activity": "Climate Control",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "6",
+        "staffName": "D",
+        "greenhouse": "GH-02",
+        "activity": "Cleaning & Sanitation",
+        "hours": 2,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "6",
+        "staffName": "D",
+        "greenhouse": "GH-02",
+        "activity": "Fertilizing",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "6",
+        "staffName": "D",
+        "greenhouse": "GH-02",
+        "activity": "Equipment Maintenance",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "3",
+        "staffName": "C",
+        "greenhouse": "GH-03",
+        "activity": "Planting",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "3",
+        "staffName": "C",
+        "greenhouse": "GH-03",
+        "activity": "Pest & Disease Control",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "3",
+        "staffName": "C",
+        "greenhouse": "GH-03",
+        "activity": "Climate Control",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "3",
+        "staffName": "C",
+        "greenhouse": "GH-03",
+        "activity": "Packaging & Grading",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "4",
+        "staffName": "D",
+        "greenhouse": "GH-03",
+        "activity": "Cleaning & Sanitation",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "7",
+        "staffName": "Y",
+        "greenhouse": "GH-03",
+        "activity": "Soil & Media Preparation",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "3",
+        "staffName": "C",
+        "greenhouse": "GH-03",
+        "activity": "Equipment Maintenance",
+        "hours": 2,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "4",
+        "staffName": "D",
+        "greenhouse": "GH-03",
+        "activity": "Trellising & Training",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "7",
+        "staffName": "Y",
+        "greenhouse": "GH-03",
+        "activity": "Harvesting",
+        "hours": 2,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "7",
+        "staffName": "Y",
+        "greenhouse": "GH-03",
+        "activity": "Fertilizing",
+        "hours": 2,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "7",
+        "staffName": "Y",
+        "greenhouse": "GH-03",
+        "activity": "Watering & Irrigation",
+        "hours": 2,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "5",
+        "staffName": "E",
+        "greenhouse": "GH-03",
+        "activity": "De-leafing & Pruning",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "UNASSIGNED",
+        "staffName": "1h unassigned - capacity exceeded",
+        "greenhouse": "GH-03",
+        "activity": "De-leafing & Pruning",
+        "hours": 1,
+        "unassigned": true,
+        "reoptimised": false
+      },
+      {
+        "staffId": "UNASSIGNED",
+        "staffName": "1h unassigned - capacity exceeded",
+        "greenhouse": "Main road GH ",
+        "activity": "Harvesting",
+        "hours": 1,
+        "unassigned": true,
+        "reoptimised": false
+      },
+      {
+        "staffId": "1",
+        "staffName": "A",
+        "greenhouse": "Main road GH ",
+        "activity": "Fertilizing",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "4",
+        "staffName": "D",
+        "greenhouse": "Main road GH ",
+        "activity": "Trellising & Training",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "4",
+        "staffName": "D",
+        "greenhouse": "Main road GH ",
+        "activity": "Quality Inspection",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "4",
+        "staffName": "D",
+        "greenhouse": "Main road GH ",
+        "activity": "Equipment Maintenance",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "1",
+        "staffName": "A",
+        "greenhouse": "Main road GH ",
+        "activity": "Soil & Media Preparation",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "1",
+        "staffName": "A",
+        "greenhouse": "Main road GH ",
+        "activity": "De-leafing & Pruning",
+        "hours": 2,
+        "unassigned": false,
+        "reoptimised": false
+      }
+    ],
+    "Tuesday": [
+      {
+        "staffId": "2",
+        "staffName": "B",
+        "greenhouse": "main green house ",
+        "activity": "Planting",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "2",
+        "staffName": "B",
+        "greenhouse": "main green house ",
+        "activity": "Fertilizing",
+        "hours": 4,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "2",
+        "staffName": "B",
+        "greenhouse": "main green house ",
+        "activity": "Watering & Irrigation",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "2",
+        "staffName": "B",
+        "greenhouse": "main green house ",
+        "activity": "Harvesting",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "5",
+        "staffName": "E",
+        "greenhouse": "main green house ",
+        "activity": "Pest & Disease Control",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "5",
+        "staffName": "E",
+        "greenhouse": "main green house ",
+        "activity": "Soil & Media Preparation",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "1",
+        "staffName": "A",
+        "greenhouse": "main green house ",
+        "activity": "Transplanting",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "4",
+        "staffName": "D",
+        "greenhouse": "main green house ",
+        "activity": "Trellising & Training",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "5",
+        "staffName": "E",
+        "greenhouse": "main green house ",
+        "activity": "Climate Control",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "5",
+        "staffName": "E",
+        "greenhouse": "main green house ",
+        "activity": "Quality Inspection",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "4",
+        "staffName": "D",
+        "greenhouse": "main green house ",
+        "activity": "Cleaning & Sanitation",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "5",
+        "staffName": "E",
+        "greenhouse": "main green house ",
+        "activity": "Packaging & Grading",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "5",
+        "staffName": "E",
+        "greenhouse": "main green house ",
+        "activity": "Equipment Maintenance",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "6",
+        "staffName": "D",
+        "greenhouse": "GH-02",
+        "activity": "Planting",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "6",
+        "staffName": "D",
+        "greenhouse": "GH-02",
+        "activity": "Soil & Media Preparation",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "6",
+        "staffName": "D",
+        "greenhouse": "GH-02",
+        "activity": "Cleaning & Sanitation",
+        "hours": 2,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "6",
+        "staffName": "D",
+        "greenhouse": "GH-02",
+        "activity": "Fertilizing",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "6",
+        "staffName": "D",
+        "greenhouse": "GH-02",
+        "activity": "Equipment Maintenance",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "3",
+        "staffName": "C",
+        "greenhouse": "GH-03",
+        "activity": "Planting",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "3",
+        "staffName": "C",
+        "greenhouse": "GH-03",
+        "activity": "Pest & Disease Control",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "3",
+        "staffName": "C",
+        "greenhouse": "GH-03",
+        "activity": "Climate Control",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "3",
+        "staffName": "C",
+        "greenhouse": "GH-03",
+        "activity": "Packaging & Grading",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "4",
+        "staffName": "D",
+        "greenhouse": "GH-03",
+        "activity": "Cleaning & Sanitation",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "7",
+        "staffName": "Y",
+        "greenhouse": "GH-03",
+        "activity": "Soil & Media Preparation",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "3",
+        "staffName": "C",
+        "greenhouse": "GH-03",
+        "activity": "Equipment Maintenance",
+        "hours": 2,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "4",
+        "staffName": "D",
+        "greenhouse": "GH-03",
+        "activity": "Trellising & Training",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "7",
+        "staffName": "Y",
+        "greenhouse": "GH-03",
+        "activity": "Harvesting",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "7",
+        "staffName": "Y",
+        "greenhouse": "GH-03",
+        "activity": "Fertilizing",
+        "hours": 2,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "7",
+        "staffName": "Y",
+        "greenhouse": "GH-03",
+        "activity": "Watering & Irrigation",
+        "hours": 2,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "7",
+        "staffName": "Y",
+        "greenhouse": "GH-03",
+        "activity": "De-leafing & Pruning",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "UNASSIGNED",
+        "staffName": "1h unassigned - capacity exceeded",
+        "greenhouse": "GH-03",
+        "activity": "De-leafing & Pruning",
+        "hours": 1,
+        "unassigned": true,
+        "reoptimised": false
+      },
+      {
+        "staffId": "5",
+        "staffName": "E",
+        "greenhouse": "Main road GH ",
+        "activity": "Harvesting",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "6",
+        "staffName": "D",
+        "greenhouse": "Main road GH ",
+        "activity": "Fertilizing",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "4",
+        "staffName": "D",
+        "greenhouse": "Main road GH ",
+        "activity": "Trellising & Training",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "4",
+        "staffName": "D",
+        "greenhouse": "Main road GH ",
+        "activity": "Quality Inspection",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "4",
+        "staffName": "D",
+        "greenhouse": "Main road GH ",
+        "activity": "Equipment Maintenance",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "1",
+        "staffName": "A",
+        "greenhouse": "Main road GH ",
+        "activity": "Soil & Media Preparation",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "1",
+        "staffName": "A",
+        "greenhouse": "Main road GH ",
+        "activity": "De-leafing & Pruning",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      }
+    ],
+    "Wednesday": [
+      {
+        "staffId": "2",
+        "staffName": "B",
+        "greenhouse": "main green house ",
+        "activity": "Fertilizing",
+        "hours": 4,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "2",
+        "staffName": "B",
+        "greenhouse": "main green house ",
+        "activity": "Watering & Irrigation",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "2",
+        "staffName": "B",
+        "greenhouse": "main green house ",
+        "activity": "Harvesting",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "2",
+        "staffName": "B",
+        "greenhouse": "main green house ",
+        "activity": "Pest & Disease Control",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "5",
+        "staffName": "E",
+        "greenhouse": "main green house ",
+        "activity": "Soil & Media Preparation",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "1",
+        "staffName": "A",
+        "greenhouse": "main green house ",
+        "activity": "Transplanting",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "4",
+        "staffName": "D",
+        "greenhouse": "main green house ",
+        "activity": "Trellising & Training",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "5",
+        "staffName": "E",
+        "greenhouse": "main green house ",
+        "activity": "Quality Inspection",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "4",
+        "staffName": "D",
+        "greenhouse": "main green house ",
+        "activity": "Cleaning & Sanitation",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "5",
+        "staffName": "E",
+        "greenhouse": "main green house ",
+        "activity": "Packaging & Grading",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "5",
+        "staffName": "E",
+        "greenhouse": "main green house ",
+        "activity": "Equipment Maintenance",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "6",
+        "staffName": "D",
+        "greenhouse": "GH-02",
+        "activity": "Planting",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "6",
+        "staffName": "D",
+        "greenhouse": "GH-02",
+        "activity": "Cleaning & Sanitation",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "6",
+        "staffName": "D",
+        "greenhouse": "GH-02",
+        "activity": "Fertilizing",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "6",
+        "staffName": "D",
+        "greenhouse": "GH-02",
+        "activity": "Equipment Maintenance",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "3",
+        "staffName": "C",
+        "greenhouse": "GH-03",
+        "activity": "Planting",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "3",
+        "staffName": "C",
+        "greenhouse": "GH-03",
+        "activity": "Pest & Disease Control",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "3",
+        "staffName": "C",
+        "greenhouse": "GH-03",
+        "activity": "Climate Control",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "4",
+        "staffName": "D",
+        "greenhouse": "GH-03",
+        "activity": "Cleaning & Sanitation",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "3",
+        "staffName": "C",
+        "greenhouse": "GH-03",
+        "activity": "Equipment Maintenance",
+        "hours": 2,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "4",
+        "staffName": "D",
+        "greenhouse": "GH-03",
+        "activity": "Trellising & Training",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "7",
+        "staffName": "Y",
+        "greenhouse": "GH-03",
+        "activity": "Harvesting",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "7",
+        "staffName": "Y",
+        "greenhouse": "GH-03",
+        "activity": "Fertilizing",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "7",
+        "staffName": "Y",
+        "greenhouse": "GH-03",
+        "activity": "Watering & Irrigation",
+        "hours": 2,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "7",
+        "staffName": "Y",
+        "greenhouse": "GH-03",
+        "activity": "De-leafing & Pruning",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "5",
+        "staffName": "E",
+        "greenhouse": "Main road GH ",
+        "activity": "Harvesting",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "4",
+        "staffName": "D",
+        "greenhouse": "Main road GH ",
+        "activity": "Trellising & Training",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "5",
+        "staffName": "E",
+        "greenhouse": "Main road GH ",
+        "activity": "Quality Inspection",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "5",
+        "staffName": "E",
+        "greenhouse": "Main road GH ",
+        "activity": "Equipment Maintenance",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "4",
+        "staffName": "D",
+        "greenhouse": "Main road GH ",
+        "activity": "Soil & Media Preparation",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "6",
+        "staffName": "D",
+        "greenhouse": "Main road GH ",
+        "activity": "De-leafing & Pruning",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      }
+    ],
+    "Thursday": [
+      {
+        "staffId": "2",
+        "staffName": "B",
+        "greenhouse": "main green house ",
+        "activity": "Fertilizing",
+        "hours": 4,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "2",
+        "staffName": "B",
+        "greenhouse": "main green house ",
+        "activity": "Watering & Irrigation",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "2",
+        "staffName": "B",
+        "greenhouse": "main green house ",
+        "activity": "Harvesting",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "2",
+        "staffName": "B",
+        "greenhouse": "main green house ",
+        "activity": "Pest & Disease Control",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "5",
+        "staffName": "E",
+        "greenhouse": "main green house ",
+        "activity": "Soil & Media Preparation",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "5",
+        "staffName": "E",
+        "greenhouse": "main green house ",
+        "activity": "Packaging & Grading",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "4",
+        "staffName": "D",
+        "greenhouse": "GH-02",
+        "activity": "Cleaning & Sanitation",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "6",
+        "staffName": "D",
+        "greenhouse": "GH-02",
+        "activity": "Fertilizing",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "3",
+        "staffName": "C",
+        "greenhouse": "GH-03",
+        "activity": "Pest & Disease Control",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "4",
+        "staffName": "D",
+        "greenhouse": "GH-03",
+        "activity": "Cleaning & Sanitation",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "3",
+        "staffName": "C",
+        "greenhouse": "GH-03",
+        "activity": "Equipment Maintenance",
+        "hours": 2,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "4",
+        "staffName": "D",
+        "greenhouse": "GH-03",
+        "activity": "Trellising & Training",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "7",
+        "staffName": "Y",
+        "greenhouse": "GH-03",
+        "activity": "Harvesting",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "7",
+        "staffName": "Y",
+        "greenhouse": "GH-03",
+        "activity": "Fertilizing",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "7",
+        "staffName": "Y",
+        "greenhouse": "GH-03",
+        "activity": "Watering & Irrigation",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "7",
+        "staffName": "Y",
+        "greenhouse": "GH-03",
+        "activity": "De-leafing & Pruning",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "1",
+        "staffName": "A",
+        "greenhouse": "Main road GH ",
+        "activity": "Quality Inspection",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "1",
+        "staffName": "A",
+        "greenhouse": "Main road GH ",
+        "activity": "Soil & Media Preparation",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "1",
+        "staffName": "A",
+        "greenhouse": "Main road GH ",
+        "activity": "De-leafing & Pruning",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      }
+    ],
+    "Friday": [
+      {
+        "staffId": "2",
+        "staffName": "B",
+        "greenhouse": "main green house ",
+        "activity": "Fertilizing",
+        "hours": 4,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "2",
+        "staffName": "B",
+        "greenhouse": "main green house ",
+        "activity": "Watering & Irrigation",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "2",
+        "staffName": "B",
+        "greenhouse": "main green house ",
+        "activity": "Harvesting",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "2",
+        "staffName": "B",
+        "greenhouse": "main green house ",
+        "activity": "Pest & Disease Control",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "5",
+        "staffName": "E",
+        "greenhouse": "main green house ",
+        "activity": "Soil & Media Preparation",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "5",
+        "staffName": "E",
+        "greenhouse": "main green house ",
+        "activity": "Packaging & Grading",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "4",
+        "staffName": "D",
+        "greenhouse": "GH-02",
+        "activity": "Cleaning & Sanitation",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "6",
+        "staffName": "D",
+        "greenhouse": "GH-03",
+        "activity": "Equipment Maintenance",
+        "hours": 2,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "6",
+        "staffName": "D",
+        "greenhouse": "GH-03",
+        "activity": "Trellising & Training",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "7",
+        "staffName": "Y",
+        "greenhouse": "GH-03",
+        "activity": "Harvesting",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "6",
+        "staffName": "D",
+        "greenhouse": "GH-03",
+        "activity": "Fertilizing",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "6",
+        "staffName": "D",
+        "greenhouse": "GH-03",
+        "activity": "Watering & Irrigation",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "6",
+        "staffName": "D",
+        "greenhouse": "GH-03",
+        "activity": "De-leafing & Pruning",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "1",
+        "staffName": "A",
+        "greenhouse": "Main road GH ",
+        "activity": "Soil & Media Preparation",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      },
+      {
+        "staffId": "1",
+        "staffName": "A",
+        "greenhouse": "Main road GH ",
+        "activity": "De-leafing & Pruning",
+        "hours": 1,
+        "unassigned": false,
+        "reoptimised": false
+      }
+    ]
+  },
+  "scheduleSummary": {
+    "totalDemand": 171,
+    "totalCapacity": 245,
+    "totalAssigned": 168,
+    "totalUnassigned": 3,
+    "shortfallByActivity": [
+      {
+        "gh": "GH-03",
+        "activity": "De-leafing & Pruning",
+        "hours": 2
+      },
+      {
+        "gh": "Main road GH ",
+        "activity": "Harvesting",
+        "hours": 1
+      }
+    ],
+    "surplusHours": 74,
+    "shortfallHours": 0
+  },
+  "settings": {
+    "tolerance": 4
+  }
+}
