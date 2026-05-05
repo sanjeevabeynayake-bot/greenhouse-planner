@@ -688,7 +688,7 @@ export default function App() {
       </div>
 
       {selectedStaff&&(
-        <StaffProfilePopup selectedStaff={selectedStaff} setSelectedStaff={setSelectedStaff} staff={staff} setStaff={setStaff} activities={activities} ghNames={ghNames} cropTypes={cropTypes} absences={absences} calcVersatility={calcVersatility} btn={btn} inp={inp} C={C} ALL_DAYS={ALL_DAYS} DAY_SHORT={DAY_SHORT} setBackupReminder={setBackupReminder}/>
+        <StaffProfilePopup selectedStaff={selectedStaff} setSelectedStaff={setSelectedStaff} staff={staff} setStaff={setStaff} activities={activities} ghNames={ghNames} ghList={ghList} cropTypes={cropTypes} absences={absences} calcVersatility={calcVersatility} btn={btn} inp={inp} C={C} ALL_DAYS={ALL_DAYS} DAY_SHORT={DAY_SHORT} setBackupReminder={setBackupReminder}/>
       )}
     </div>
   );
@@ -756,11 +756,14 @@ function ClusterTransitionUI({clusters,setClusters,clusterTransitions,setCluster
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// DEMAND PAGE
+// DEMAND PAGE — day-by-day entry per GH per crop per activity
 // ═══════════════════════════════════════════════════════════════════════════════
 function DemandPage({ghList,activities,cropTypes,demand,setDemand,cycles,setCycles,activeCycleId,setActiveCycleId,activeWeekIndex,setActiveWeekIndex,totalCapacity,generating,generateSchedule,setScheduleStale,btn,inp,card,C}){
   const fmtD=(iso)=>{if(!iso)return"";const d=new Date(iso);return d.toLocaleDateString("en-AU",{day:"2-digit",month:"short",year:"numeric"});};
   const addD=(iso,n)=>{const d=new Date(iso);d.setDate(d.getDate()+n);return d.toISOString().split("T")[0];};
+  const ALL_DAYS_D=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+  const DAY_SHORT_D={"Monday":"Mon","Tuesday":"Tue","Wednesday":"Wed","Thursday":"Thu","Friday":"Fri","Saturday":"Sat","Sunday":"Sun"};
+
   const [newCycleName,setNewCycleName]=useState("Cycle 1");
   const [newCycleStart,setNewCycleStart]=useState(new Date().toISOString().split("T")[0]);
   const [newCycleActivationDate,setNewCycleActivationDate]=useState("");
@@ -785,7 +788,7 @@ function DemandPage({ghList,activities,cropTypes,demand,setDemand,cycles,setCycl
     const newCycle={
       id:`cycle_${Date.now()}`,
       name:`Cycle ${cycles.length+1}`,status:"draft",
-      activationDate:newStart,  // auto-set activation date to start date
+      activationDate:newStart,
       weeks:[0,1,2].map(i=>({
         weekIndex:i,label:`Week ${i+1}`,
         startDate:addD(newStart,i*7),endDate:addD(newStart,i*7+6),
@@ -801,55 +804,72 @@ function DemandPage({ghList,activities,cropTypes,demand,setDemand,cycles,setCycl
   const activeCycle=cycles.find(c=>c.id===activeCycleId)||cycles[0]||null;
   const activeWeek=activeCycle?.weeks?.[activeWeekIndex]||null;
 
-  // Cycle activation lock check
   const canActivateCycle=(cy)=>{
     if(!cy.activationDate)return true;
-    const now=new Date();
-    const actDate=new Date(cy.activationDate);
-    return now>=actDate;
+    return new Date()>=new Date(cy.activationDate);
   };
 
-  const getGhCrops=(ghName)=>activeWeek?.ghCrops?.[ghName]||[];
-  const setGhCrops=(ghName,crops)=>{
-    const updated=cycles.map(cy=>cy.id===activeCycle.id?{...cy,weeks:cy.weeks.map((w,wi)=>wi===activeWeekIndex?{...w,ghCrops:{...w.ghCrops,[ghName]:crops}}:w)}:cy);
-    setCycles(updated);setDemand(prev=>({...prev,__cycles:updated}));
-  };
-
+  // demand structure: { ghName: { cropType: { activity: { day: hours } } } }
   const getWeekDemand=()=>activeWeek?.demand||{};
-  const setWeekDemandVal=(ghName,cropType,activity,val)=>{
+
+  const setDayVal=(ghName,cropType,activity,day,val)=>{
     const updated=cycles.map(cy=>cy.id===activeCycle.id?{...cy,weeks:cy.weeks.map((w,wi)=>{
       if(wi!==activeWeekIndex)return w;
       const d=JSON.parse(JSON.stringify(w.demand||{}));
       if(!d[ghName])d[ghName]={};
       if(!d[ghName][cropType])d[ghName][cropType]={};
-      d[ghName][cropType][activity]=val;
+      if(!d[ghName][cropType][activity])d[ghName][cropType][activity]={};
+      d[ghName][cropType][activity][day]=val;
       return{...w,demand:d};
     })}:cy);
     setCycles(updated);
+    // Flatten for optimiser: sum across days per gh/crop/activity
+    const wd=updated.find(cy=>cy.id===activeCycleId)?.weeks[activeWeekIndex]?.demand||{};
     const flatDemand={};
-    updated.find(cy=>cy.id===activeCycleId)?.weeks[activeWeekIndex]?.demand&&Object.entries(updated.find(cy=>cy.id===activeCycleId).weeks[activeWeekIndex].demand).forEach(([gh,cropRows])=>{
+    Object.entries(wd).forEach(([gh,cropRows])=>{
       flatDemand[gh]={};
-      Object.entries(cropRows).forEach(([,acts])=>Object.entries(acts).forEach(([act,hrs])=>{flatDemand[gh][act]=(flatDemand[gh][act]||0)+(parseInt(hrs)||0);}));
+      Object.entries(cropRows).forEach(([,acts])=>Object.entries(acts).forEach(([act,days])=>{
+        const total=Object.values(days).reduce((s,h)=>s+(parseInt(h)||0),0);
+        flatDemand[gh][act]=(flatDemand[gh][act]||0)+total;
+      }));
     });
     setDemand(prev=>({...prev,...flatDemand,__cycles:updated}));
     setScheduleStale(true);
   };
 
   const wd=getWeekDemand();
-  const weekTotal=Object.values(wd).reduce((sum,cropRows)=>sum+Object.values(cropRows).reduce((s2,acts)=>s2+Object.values(acts).reduce((s3,h)=>s3+(parseInt(h)||0),0),0),0);
+
+  // Week total
+  const weekTotal=Object.values(wd).reduce((s1,cropRows)=>s1+Object.values(cropRows).reduce((s2,acts)=>s2+Object.values(acts).reduce((s3,days)=>s3+Object.values(days).reduce((s4,h)=>s4+(parseInt(h)||0),0),0),0),0);
+
+  // Build week day dates for header
+  const weekDates={};
+  if(activeWeek?.startDate){ALL_DAYS_D.forEach((day,i)=>{const d=new Date(activeWeek.startDate);d.setDate(d.getDate()+i);weekDates[day]=d.toLocaleDateString("en-AU",{day:"2-digit",month:"short"});});}
 
   const handleGenerate=()=>{
+    // Build flat demand and cropDemand for optimiser
     const flat={};
     const cropDemand={};
     Object.entries(wd).forEach(([gh,cropRows])=>{
       flat[gh]={};
       cropDemand[gh]={};
       Object.entries(cropRows).forEach(([ct,acts])=>{
-        cropDemand[gh][ct]=acts;
-        Object.entries(acts).forEach(([act,hrs])=>{flat[gh][act]=(flat[gh][act]||0)+(parseInt(hrs)||0);});
+        cropDemand[gh][ct]={};
+        Object.entries(acts).forEach(([act,days])=>{
+          const total=Object.values(days).reduce((s,h)=>s+(parseInt(h)||0),0);
+          flat[gh][act]=(flat[gh][act]||0)+total;
+          cropDemand[gh][ct][act]=total;
+        });
       });
     });
     generateSchedule(flat,cropDemand);
+  };
+
+  // Get GH crops for a specific GH from the ghCrops setting in this week
+  const getGhCrops=(ghName)=>activeWeek?.ghCrops?.[ghName]||[];
+  const setGhCrops=(ghName,crops)=>{
+    const updated=cycles.map(cy=>cy.id===activeCycle.id?{...cy,weeks:cy.weeks.map((w,wi)=>wi===activeWeekIndex?{...w,ghCrops:{...w.ghCrops,[ghName]:crops}}:w)}:cy);
+    setCycles(updated);setDemand(prev=>({...prev,__cycles:updated}));
   };
 
   if(!cycles.length||!activeCycle)return(
@@ -861,7 +881,7 @@ function DemandPage({ghList,activities,cropTypes,demand,setDemand,cycles,setCycl
         <div style={{display:"flex",gap:"12px",flexWrap:"wrap",alignItems:"flex-end"}}>
           <div><label style={{display:"block",fontSize:"13px",color:C.textMid,marginBottom:"4px"}}>Cycle Name:</label><input value={newCycleName} onChange={e=>setNewCycleName(e.target.value)} style={{...inp,width:"160px"}} placeholder="Cycle 1"/></div>
           <div><label style={{display:"block",fontSize:"13px",color:C.textMid,marginBottom:"4px"}}>Start Date:</label><input type="date" value={newCycleStart} onChange={e=>setNewCycleStart(e.target.value)} style={inp}/></div>
-          <div><label style={{display:"block",fontSize:"13px",color:C.textMid,marginBottom:"4px"}}>Activation Date (optional lock):</label><input type="date" value={newCycleActivationDate} onChange={e=>setNewCycleActivationDate(e.target.value)} style={inp}/></div>
+          <div><label style={{display:"block",fontSize:"13px",color:C.textMid,marginBottom:"4px"}}>Activation Date (optional):</label><input type="date" value={newCycleActivationDate} onChange={e=>setNewCycleActivationDate(e.target.value)} style={inp}/></div>
           <button onClick={createCycle} style={{...btn(false,C.green),padding:"9px 20px"}}>🚀 Create Cycle</button>
         </div>
       </div>
@@ -889,8 +909,6 @@ function DemandPage({ghList,activities,cropTypes,demand,setDemand,cycles,setCycl
           })}
           <button onClick={()=>{const nm=window.prompt("New cycle name:",`Cycle ${cycles.length+1}`);if(!nm)return;const sd=window.prompt("Start date (YYYY-MM-DD):",addD(activeCycle.weeks[2].endDate,1));if(!sd)return;const ad=window.prompt("Activation date lock (YYYY-MM-DD, optional):",addD(activeCycle.weeks[2].endDate,1));const nc={id:`cycle_${Date.now()}`,name:nm,status:"draft",activationDate:ad||null,weeks:[0,1,2].map(i=>({weekIndex:i,label:`Week ${i+1}`,startDate:addD(sd,i*7),endDate:addD(sd,i*7+6),ghCrops:{},demand:{}}))};const upd=[...cycles,nc];setCycles(upd);setActiveCycleId(nc.id);setActiveWeekIndex(0);setDemand(prev=>({...prev,__cycles:upd}));}} style={{...btn(false,C.teal),fontSize:"12px",padding:"6px 12px"}}>+ New Cycle</button>
           <button onClick={carryForward} style={{...btn(false,C.blue),fontSize:"12px",padding:"6px 12px"}}>⏩ Carry Forward</button>
-
-          {/* Activation lock info */}
           {activeCycle?.activationDate&&(
             <span style={{fontSize:"11px",color:canActivateCycle(activeCycle)?C.green:C.gold,marginLeft:"8px"}}>
               {canActivateCycle(activeCycle)?"✅ Can activate":"🔒 Activates: "+new Date(activeCycle.activationDate).toLocaleDateString("en-AU")}
@@ -917,72 +935,99 @@ function DemandPage({ghList,activities,cropTypes,demand,setDemand,cycles,setCycl
             <h4 style={{color:C.navy,margin:"0 0 4px 0"}}>{activeCycle.name} — {activeWeek?.label}</h4>
             <span style={{fontSize:"12px",color:C.textLight}}>{fmtD(activeWeek?.startDate)} to {fmtD(activeWeek?.endDate)}</span>
           </div>
-          <div style={{display:"flex",gap:"8px",alignItems:"center"}}>
-            <span style={{fontSize:"13px",color:C.textMid}}>Week demand: <strong style={{color:weekTotal>totalCapacity?C.red:C.navy}}>{weekTotal}h</strong> / Capacity: <strong style={{color:C.green}}>{totalCapacity}h</strong></span>
-          </div>
+          <span style={{fontSize:"13px",color:C.textMid}}>Week total: <strong style={{color:weekTotal>totalCapacity?C.red:C.navy}}>{weekTotal}h</strong> / Capacity: <strong style={{color:C.green}}>{totalCapacity}h</strong></span>
         </div>
 
-        <div style={{overflowX:"auto"}}>
-          {ghList.map((gh)=>{
-            const ghName=gh.name;
-            const selectedCrops=getGhCrops(ghName);
-            const ghDemand=wd[ghName]||{};
-            return(
-              <div key={ghName} style={{marginBottom:"16px",border:`1px solid ${C.border}`,borderRadius:"8px",overflow:"hidden"}}>
-                <div style={{background:C.navy,padding:"8px 12px",display:"flex",alignItems:"center",gap:"12px",flexWrap:"wrap"}}>
-                  <span style={{color:"white",fontWeight:"700",fontSize:"13px",minWidth:"120px"}}>{ghName}</span>
-                  <span style={{color:"rgba(255,255,255,0.7)",fontSize:"11px"}}>Select crops for this week:</span>
-                  <div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>
-                    {cropTypes.map(ct=>(
-                      <label key={ct} style={{display:"flex",alignItems:"center",gap:"4px",background:selectedCrops.includes(ct)?"rgba(46,204,113,0.3)":"rgba(255,255,255,0.1)",padding:"3px 8px",borderRadius:"4px",cursor:"pointer",border:`1px solid ${selectedCrops.includes(ct)?"#2ecc71":"rgba(255,255,255,0.2)"}`,fontSize:"11px",color:"white"}}>
-                        <input type="checkbox" checked={selectedCrops.includes(ct)} onChange={e=>{const crops=e.target.checked?[...selectedCrops,ct]:selectedCrops.filter(c=>c!==ct);setGhCrops(ghName,crops);}} style={{accentColor:C.green}}/>{ct}
-                      </label>
-                    ))}
-                  </div>
+        {/* Per-GH demand entry */}
+        {ghList.map((gh)=>{
+          const ghName=gh.name;
+          const selectedCrops=getGhCrops(ghName);
+          const ghDemand=wd[ghName]||{};
+
+          return(
+            <div key={ghName} style={{marginBottom:"20px",border:`1px solid ${C.border}`,borderRadius:"8px",overflow:"hidden"}}>
+
+              {/* GH header — crop selection */}
+              <div style={{background:C.navy,padding:"8px 12px",display:"flex",alignItems:"center",gap:"12px",flexWrap:"wrap"}}>
+                <span style={{color:"white",fontWeight:"700",fontSize:"13px",minWidth:"120px"}}>{ghName}</span>
+                <span style={{color:"rgba(255,255,255,0.7)",fontSize:"11px"}}>Crops this week:</span>
+                <div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>
+                  {cropTypes.map(ct=>(
+                    <label key={ct} style={{display:"flex",alignItems:"center",gap:"4px",background:selectedCrops.includes(ct)?"rgba(46,204,113,0.3)":"rgba(255,255,255,0.1)",padding:"3px 8px",borderRadius:"4px",cursor:"pointer",border:`1px solid ${selectedCrops.includes(ct)?"#2ecc71":"rgba(255,255,255,0.2)"}`,fontSize:"11px",color:"white"}}>
+                      <input type="checkbox" checked={selectedCrops.includes(ct)} onChange={e=>{const crops=e.target.checked?[...selectedCrops,ct]:selectedCrops.filter(c=>c!==ct);setGhCrops(ghName,crops);}} style={{accentColor:C.green}}/>{ct}
+                    </label>
+                  ))}
                 </div>
-                {selectedCrops.length===0?(
-                  <div style={{padding:"10px 14px",background:"#fafafa",fontSize:"12px",color:C.textLight,fontStyle:"italic"}}>Select one or more crop types above to enter demand hours.</div>
-                ):(
-                  <div style={{overflowX:"auto"}}>
-                    <table style={{borderCollapse:"collapse",fontSize:"12px",width:"100%"}}>
-                      <thead>
-                        <tr style={{background:"#eaf4fb"}}>
-                          <th style={{padding:"7px 12px",textAlign:"left",fontSize:"11px",color:C.navy,fontWeight:"700",minWidth:"130px",borderBottom:`1px solid ${C.border}`}}>Crop Type</th>
-                          {activities.map(a=><th key={a} style={{padding:"5px 3px",textAlign:"center",fontSize:"10px",color:C.textMid,minWidth:"72px",borderBottom:`1px solid ${C.border}`,fontWeight:"600"}}>{a}</th>)}
-                          <th style={{padding:"5px 8px",textAlign:"center",fontSize:"11px",color:C.navy,fontWeight:"700",borderBottom:`1px solid ${C.border}`}}>Total</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {selectedCrops.map((ct,ci)=>{
-                          const rowTotal=activities.reduce((sum,act)=>sum+(parseInt(ghDemand[ct]?.[act])||0),0);
-                          return(
-                            <tr key={ct} style={{background:ci%2===0?"white":C.light}}>
-                              <td style={{padding:"6px 12px",fontWeight:"600",color:C.teal,fontSize:"12px",borderRight:`1px solid ${C.border}`}}>{ct}</td>
-                              {activities.map(activity=>(
-                                <td key={activity} style={{padding:"2px",textAlign:"center"}}>
-                                  <input type="number" min="0" max="999"
-                                    value={ghDemand[ct]?.[activity]||""}
-                                    onChange={e=>setWeekDemandVal(ghName,ct,activity,parseInt(e.target.value)||0)}
-                                    style={{width:"52px",padding:"3px",border:`1px solid ${C.border}`,borderRadius:"4px",textAlign:"center",fontSize:"12px"}}/>
-                                </td>
-                              ))}
-                              <td style={{padding:"6px 8px",textAlign:"center",fontWeight:"700",color:rowTotal>0?C.navy:C.textLight,fontSize:"12px"}}>{rowTotal||"—"}</td>
-                            </tr>
-                          );
-                        })}
-                        <tr style={{background:"#eaf4fb",borderTop:`2px solid ${C.border}`}}>
-                          <td style={{padding:"6px 12px",fontWeight:"700",color:C.navy,fontSize:"12px"}}>GH Total</td>
-                          {activities.map(act=>{const colTotal=selectedCrops.reduce((s,ct)=>s+(parseInt(ghDemand[ct]?.[act])||0),0);return <td key={act} style={{padding:"6px 3px",textAlign:"center",fontSize:"12px",fontWeight:colTotal>0?"700":"400",color:colTotal>0?C.navy:C.textLight}}>{colTotal||""}</td>;})}
-                          <td style={{padding:"6px 8px",textAlign:"center",fontWeight:"700",color:C.navy,fontSize:"12px"}}>{selectedCrops.reduce((s,ct)=>s+activities.reduce((s2,act)=>s2+(parseInt(ghDemand[ct]?.[act])||0),0),0)||"—"}</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                )}
               </div>
-            );
-          })}
-        </div>
+
+              {selectedCrops.length===0?(
+                <div style={{padding:"10px 14px",background:"#fafafa",fontSize:"12px",color:C.textLight,fontStyle:"italic"}}>Select crop types above to enter demand hours.</div>
+              ):(
+                <div style={{overflowX:"auto"}}>
+                  {selectedCrops.map((ct,ci)=>{
+                    const ctDemand=ghDemand[ct]||{};
+                    // Calc row total across all activities and days
+                    const ctTotal=activities.reduce((s,act)=>s+ALL_DAYS_D.reduce((sd,day)=>sd+(parseInt(ctDemand[act]?.[day])||0),0),0);
+                    return(
+                      <div key={ct} style={{borderTop:ci>0?`1px solid ${C.border}`:"none"}}>
+                        {/* Crop sub-header */}
+                        <div style={{background:"#eaf4fb",padding:"6px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                          <span style={{fontWeight:"700",color:C.teal,fontSize:"12px"}}>🌱 {ct}</span>
+                          <span style={{fontSize:"11px",color:C.textMid}}>Total: <strong style={{color:ctTotal>0?C.navy:C.textLight}}>{ctTotal||0}h</strong></span>
+                        </div>
+
+                        {/* Per-activity day grid */}
+                        <table style={{borderCollapse:"collapse",fontSize:"11px",width:"100%"}}>
+                          <thead>
+                            <tr style={{background:"#f5f7fa"}}>
+                              <th style={{padding:"5px 12px",textAlign:"left",fontSize:"11px",color:C.navy,fontWeight:"700",minWidth:"150px",borderBottom:`1px solid ${C.border}`}}>Activity</th>
+                              {ALL_DAYS_D.map(day=>(
+                                <th key={day} style={{padding:"4px 3px",textAlign:"center",fontSize:"10px",color:["Saturday","Sunday"].includes(day)?C.orange:C.textMid,minWidth:"52px",borderBottom:`1px solid ${C.border}`,fontWeight:"600"}}>
+                                  {DAY_SHORT_D[day]}
+                                  {weekDates[day]&&<div style={{fontSize:"9px",color:C.textLight,fontWeight:"400"}}>{weekDates[day]}</div>}
+                                </th>
+                              ))}
+                              <th style={{padding:"4px 8px",textAlign:"center",fontSize:"11px",color:C.navy,fontWeight:"700",borderBottom:`1px solid ${C.border}`}}>Total</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {activities.map((activity,ai)=>{
+                              const actDays=ctDemand[activity]||{};
+                              const actTotal=ALL_DAYS_D.reduce((s,day)=>s+(parseInt(actDays[day])||0),0);
+                              return(
+                                <tr key={activity} style={{background:ai%2===0?"white":C.light}}>
+                                  <td style={{padding:"4px 12px",fontWeight:"500",color:C.textDark,fontSize:"11px",borderRight:`1px solid ${C.border}`}}>{activity}</td>
+                                  {ALL_DAYS_D.map(day=>(
+                                    <td key={day} style={{padding:"2px",textAlign:"center",background:["Saturday","Sunday"].includes(day)?"#fffbf5":"inherit"}}>
+                                      <input type="number" min="0" max="99"
+                                        value={actDays[day]||""}
+                                        onChange={e=>setDayVal(ghName,ct,activity,day,parseInt(e.target.value)||0)}
+                                        style={{width:"44px",padding:"2px",border:`1px solid ${C.border}`,borderRadius:"3px",textAlign:"center",fontSize:"11px",background:["Saturday","Sunday"].includes(day)?"#fff8f0":"white"}}/>
+                                    </td>
+                                  ))}
+                                  <td style={{padding:"4px 8px",textAlign:"center",fontWeight:"700",color:actTotal>0?C.navy:C.textLight,fontSize:"11px"}}>{actTotal||"—"}</td>
+                                </tr>
+                              );
+                            })}
+                            {/* Crop subtotal row */}
+                            <tr style={{background:"#eaf4fb",borderTop:`2px solid ${C.border}`}}>
+                              <td style={{padding:"5px 12px",fontWeight:"700",color:C.navy,fontSize:"11px"}}>Daily Total</td>
+                              {ALL_DAYS_D.map(day=>{
+                                const dayTotal=activities.reduce((s,act)=>s+(parseInt(ctDemand[act]?.[day])||0),0);
+                                return <td key={day} style={{padding:"4px 3px",textAlign:"center",fontSize:"11px",fontWeight:dayTotal>0?"700":"400",color:dayTotal>0?C.navy:C.textLight}}>{dayTotal||""}</td>;
+                              })}
+                              <td style={{padding:"5px 8px",textAlign:"center",fontWeight:"700",color:C.navy,fontSize:"11px"}}>{ctTotal}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
 
         <div style={{marginTop:"16px",display:"flex",gap:"10px",alignItems:"center",flexWrap:"wrap"}}>
           <button onClick={handleGenerate} disabled={generating} style={{...btn(false,C.green),padding:"11px 26px",fontSize:"14px",opacity:generating?0.7:1}}>{generating?"⏳ Optimising...":"🚀 Generate Optimised Plan"}</button>
@@ -1652,19 +1697,67 @@ function BulkCSVImport({staff,setStaff,API,btn,inp,C,setBackupReminder}){
 // ═══════════════════════════════════════════════════════════════════════════════
 // STAFF PROFILE POPUP
 // ═══════════════════════════════════════════════════════════════════════════════
-function StaffProfilePopup({selectedStaff,setSelectedStaff,staff,setStaff,activities,ghNames,cropTypes,absences,calcVersatility,btn,inp,C,ALL_DAYS,DAY_SHORT,setBackupReminder}){
+function StaffProfilePopup({selectedStaff,setSelectedStaff,staff,setStaff,activities,ghNames,ghList,cropTypes,absences,calcVersatility,btn,inp,C,ALL_DAYS,DAY_SHORT,setBackupReminder}){
   const [expandedAct,setExpandedAct]=useState(null);
   const update=(updates)=>{const u={...selectedStaff,...updates};setSelectedStaff(u);setStaff(staff.map(s=>s.id===selectedStaff.id?u:s));setBackupReminder(true);};
-  const staffActs=(selectedStaff.activities||[]).map(a=>typeof a==="string"?{activity:a,allGreenhouses:true,greenhouses:[...ghNames],cropTypes:[...cropTypes]}:a);
+
+  // Migrate old flat model to new per-GH model on the fly
+  const migrateActObj=(a)=>{
+    if(typeof a==="string")return{activity:a,allGreenhouses:true,greenhouses:[...ghNames],ghCropTypes:{}};
+    // old model had flat cropTypes — migrate to ghCropTypes
+    if(a.cropTypes&&!a.ghCropTypes){
+      const ghCropTypes={};
+      (a.allGreenhouses?ghNames:a.greenhouses||[]).forEach(gh=>{ghCropTypes[gh]=[...a.cropTypes];});
+      return{...a,ghCropTypes,cropTypes:undefined};
+    }
+    if(!a.ghCropTypes)return{...a,ghCropTypes:{}};
+    return a;
+  };
+
+  const staffActs=(selectedStaff.activities||[]).map(migrateActObj);
   const hasActivity=(actName)=>staffActs.some(a=>a.activity===actName);
-  const toggleActivity=(actName,checked)=>{const newActs=checked?[...staffActs,{activity:actName,allGreenhouses:true,greenhouses:[...ghNames],cropTypes:[...cropTypes]}]:staffActs.filter(a=>a.activity!==actName);if(!checked&&expandedAct===actName)setExpandedAct(null);update({activities:newActs});};
+
+  const toggleActivity=(actName,checked)=>{
+    // When adding: default all GHs, and for each GH default all its crops
+    const defaultGhCropTypes={};
+    ghNames.forEach(gh=>{
+      const ghObj=ghList.find(g=>g.name===gh);
+      defaultGhCropTypes[gh]=[...(ghObj?.cropTypes||cropTypes)];
+    });
+    const newActs=checked
+      ?[...staffActs,{activity:actName,allGreenhouses:true,greenhouses:[...ghNames],ghCropTypes:defaultGhCropTypes}]
+      :staffActs.filter(a=>a.activity!==actName);
+    if(!checked&&expandedAct===actName)setExpandedAct(null);
+    update({activities:newActs});
+  };
+
   const updateActObj=(actName,changes)=>update({activities:staffActs.map(a=>a.activity===actName?{...a,...changes}:a)});
   const getActObj=(actName)=>staffActs.find(a=>a.activity===actName)||null;
+
+  // Get crops for a specific GH under an activity
+  const getGhCrops=(actObj,gh)=>actObj.ghCropTypes?.[gh]??[];
+  const setGhCrops=(actName,gh,crops)=>{
+    const actObj=getActObj(actName);
+    if(!actObj)return;
+    updateActObj(actName,{ghCropTypes:{...actObj.ghCropTypes,[gh]:crops}});
+  };
+
+  // Which GHs are active for this activity
+  const getActiveGHs=(actObj)=>actObj.allGreenhouses?ghNames:(actObj.greenhouses||[]);
+
+  // Summary for display
+  const actSummary=(actObj)=>{
+    const ghs=getActiveGHs(actObj);
+    const totalCrops=new Set(ghs.flatMap(gh=>getGhCrops(actObj,gh))).size;
+    return`${actObj.allGreenhouses?"All GHs":`${ghs.length} GHs`} · ${totalCrops} crops`;
+  };
+
   const v=calcVersatility(selectedStaff);
   const absCount=ALL_DAYS.filter(d=>{const al=absences[d]||[];return al.includes(selectedStaff.id)||al.some(x=>typeof x==="object"&&x.id===selectedStaff.id&&x.hours===0);}).length;
+
   return(
     <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.65)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000}}>
-      <div style={{background:"white",borderRadius:"14px",padding:"28px",maxWidth:"820px",width:"95%",maxHeight:"92vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
+      <div style={{background:"white",borderRadius:"14px",padding:"28px",maxWidth:"900px",width:"95%",maxHeight:"92vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"20px"}}>
           <div><h2 style={{color:C.navy,margin:"0 0 4px 0"}}>{selectedStaff.name}</h2><span style={{fontFamily:"monospace",color:C.textLight,fontSize:"13px"}}>{selectedStaff.id}</span></div>
           <button onClick={()=>setSelectedStaff(null)} style={btn(false,C.red)}>✕ Close</button>
@@ -1699,37 +1792,119 @@ function StaffProfilePopup({selectedStaff,setSelectedStaff,staff,setStaff,activi
           </div>
           <p style={{color:C.textLight,fontSize:"12px",marginTop:"8px"}}>Set 0 for days not worked. Use Absence tab for one-off weekly changes.</p>
         </div>
+
+        {/* ── Activities with per-GH crop types ── */}
         <div style={{marginBottom:"20px"}}>
-          <h4 style={{color:C.navy,marginBottom:"6px",fontSize:"14px"}}>⚙️ Activities, Greenhouses & Crop Types</h4>
-          <p style={{color:C.textMid,fontSize:"12px",marginBottom:"12px"}}>Tick an activity. Expand to set which greenhouses and crop types apply for that specific activity in that specific greenhouse combination.</p>
+          <h4 style={{color:C.navy,marginBottom:"4px",fontSize:"14px"}}>⚙️ Activities, Greenhouses & Crop Types</h4>
+          <p style={{color:C.textMid,fontSize:"12px",marginBottom:"12px"}}>
+            Tick an activity → choose which greenhouses → for each greenhouse choose which crop types. By default all greenhouses and all crops are selected.
+          </p>
           <div style={{display:"flex",flexDirection:"column",gap:"6px"}}>
             {activities.map(actName=>{
-              const isChecked=hasActivity(actName);const actObj=getActObj(actName);const isExpanded=expandedAct===actName&&isChecked;
+              const isChecked=hasActivity(actName);
+              const actObj=getActObj(actName);
+              const isExpanded=expandedAct===actName&&isChecked;
+              const activeGHs=actObj?getActiveGHs(actObj):[];
               return(
                 <div key={actName} style={{border:`1px solid ${isChecked?C.teal:C.border}`,borderRadius:"8px",overflow:"hidden",background:isChecked?"#f0fdfb":"#fafafa"}}>
+                  {/* Activity row */}
                   <div style={{display:"flex",alignItems:"center",gap:"10px",padding:"10px 14px"}}>
                     <input type="checkbox" checked={isChecked} onChange={e=>toggleActivity(actName,e.target.checked)} style={{width:"16px",height:"16px",cursor:"pointer",accentColor:C.teal}}/>
                     <span style={{flex:1,fontSize:"13px",fontWeight:isChecked?"600":"400",color:isChecked?C.navy:C.textMid}}>{actName}</span>
-                    {isChecked&&actObj&&<span style={{fontSize:"11px",color:C.textLight}}>{actObj.allGreenhouses?"All GHs":`${actObj.greenhouses?.length||0} GHs`}{" · "}{actObj.cropTypes?.length||0} crops</span>}
-                    {isChecked&&<button onClick={()=>setExpandedAct(isExpanded?null:actName)} style={{background:"none",border:`1px solid ${C.teal}`,color:C.teal,borderRadius:"4px",padding:"2px 8px",cursor:"pointer",fontSize:"12px"}}>{isExpanded?"▲ Hide":"▼ Configure"}</button>}
+                    {isChecked&&actObj&&<span style={{fontSize:"11px",color:C.textLight}}>{actSummary(actObj)}</span>}
+                    {isChecked&&<button onClick={()=>setExpandedAct(isExpanded?null:actName)} style={{background:"none",border:`1px solid ${C.teal}`,color:C.teal,borderRadius:"4px",padding:"2px 10px",cursor:"pointer",fontSize:"12px"}}>{isExpanded?"▲ Hide":"▼ Configure"}</button>}
                   </div>
+
+                  {/* Expanded config */}
                   {isExpanded&&actObj&&(
                     <div style={{borderTop:"1px solid #c8ede8",padding:"14px",background:"white"}}>
-                      <div style={{marginBottom:"14px"}}>
-                        <div style={{display:"flex",alignItems:"center",gap:"12px",marginBottom:"8px"}}>
-                          <label style={{fontSize:"13px",fontWeight:"600",color:C.navy}}>🏗️ Greenhouses:</label>
-                          <label style={{display:"flex",alignItems:"center",gap:"5px",fontSize:"13px",cursor:"pointer"}}>
-                            <input type="checkbox" checked={actObj.allGreenhouses} onChange={e=>updateActObj(actName,{allGreenhouses:e.target.checked,greenhouses:e.target.checked?[...ghNames]:actObj.greenhouses})} style={{accentColor:C.teal}}/>
-                            <span style={{color:actObj.allGreenhouses?C.teal:C.textMid,fontWeight:"600"}}>All Greenhouses</span>
+
+                      {/* Step 1: Greenhouse selection */}
+                      <div style={{marginBottom:"16px"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:"12px",marginBottom:"10px"}}>
+                          <span style={{fontSize:"13px",fontWeight:"700",color:C.navy}}>Step 1 — Greenhouses:</span>
+                          <label style={{display:"flex",alignItems:"center",gap:"5px",fontSize:"13px",cursor:"pointer",background:actObj.allGreenhouses?"#e8fdf5":"#f8f9fa",padding:"4px 10px",borderRadius:"6px",border:`1px solid ${actObj.allGreenhouses?C.teal:C.border}`}}>
+                            <input type="checkbox" checked={actObj.allGreenhouses}
+                              onChange={e=>{
+                                const allGH=e.target.checked;
+                                const newGHs=allGH?[...ghNames]:actObj.greenhouses||[];
+                                // When switching to all, seed ghCropTypes for any missing GHs
+                                const newGhCropTypes={...actObj.ghCropTypes};
+                                if(allGH){
+                                  ghNames.forEach(gh=>{
+                                    if(!newGhCropTypes[gh]){
+                                      const ghObj=ghList.find(g=>g.name===gh);
+                                      newGhCropTypes[gh]=[...(ghObj?.cropTypes||cropTypes)];
+                                    }
+                                  });
+                                }
+                                updateActObj(actName,{allGreenhouses:allGH,greenhouses:newGHs,ghCropTypes:newGhCropTypes});
+                              }}
+                              style={{accentColor:C.teal}}/>
+                            <span style={{fontWeight:"600",color:actObj.allGreenhouses?C.teal:C.textMid}}>All Greenhouses</span>
                           </label>
                         </div>
-                        {!actObj.allGreenhouses&&<div style={{display:"flex",flexWrap:"wrap",gap:"5px"}}>{ghNames.map(gh=><label key={gh} style={{display:"flex",alignItems:"center",gap:"3px",background:(actObj.greenhouses||[]).includes(gh)?"#d5f0ff":"white",padding:"4px 8px",borderRadius:"5px",cursor:"pointer",border:`1px solid ${(actObj.greenhouses||[]).includes(gh)?C.blue:C.border}`,fontSize:"12px"}}><input type="checkbox" checked={(actObj.greenhouses||[]).includes(gh)} onChange={e=>{const ghs=actObj.greenhouses||[];updateActObj(actName,{greenhouses:e.target.checked?[...ghs,gh]:ghs.filter(g=>g!==gh)});}} style={{accentColor:C.blue}}/>{gh}</label>)}</div>}
-                        {actObj.allGreenhouses&&<div style={{fontSize:"12px",color:C.textLight,fontStyle:"italic"}}>✓ Can perform this activity in any greenhouse</div>}
+                        {!actObj.allGreenhouses&&(
+                          <div style={{display:"flex",flexWrap:"wrap",gap:"5px"}}>
+                            {ghNames.map(gh=>{
+                              const selected=(actObj.greenhouses||[]).includes(gh);
+                              return(
+                                <label key={gh} style={{display:"flex",alignItems:"center",gap:"4px",background:selected?"#d5f0ff":"white",padding:"5px 10px",borderRadius:"6px",cursor:"pointer",border:`1px solid ${selected?C.blue:C.border}`,fontSize:"12px",fontWeight:selected?"600":"400"}}>
+                                  <input type="checkbox" checked={selected}
+                                    onChange={e=>{
+                                      const ghs=actObj.greenhouses||[];
+                                      const newGHs=e.target.checked?[...ghs,gh]:ghs.filter(g=>g!==gh);
+                                      // Seed crops for newly added GH
+                                      const newGhCropTypes={...actObj.ghCropTypes};
+                                      if(e.target.checked&&!newGhCropTypes[gh]){
+                                        const ghObj=ghList.find(g=>g.name===gh);
+                                        newGhCropTypes[gh]=[...(ghObj?.cropTypes||cropTypes)];
+                                      }
+                                      updateActObj(actName,{greenhouses:newGHs,ghCropTypes:newGhCropTypes});
+                                    }}
+                                    style={{accentColor:C.blue}}/>{gh}
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
+
+                      {/* Step 2: Per-GH crop types */}
                       <div>
-                        <div style={{fontSize:"13px",fontWeight:"600",color:C.navy,marginBottom:"8px"}}>🌱 Crop Types for this activity:</div>
-                        <p style={{fontSize:"12px",color:C.textMid,marginBottom:"8px"}}>Staff must have the crop type listed here to be assigned to a slot with that crop.</p>
-                        <div style={{display:"flex",flexWrap:"wrap",gap:"5px"}}>{cropTypes.map(ct=><label key={ct} style={{display:"flex",alignItems:"center",gap:"3px",background:(actObj.cropTypes||[]).includes(ct)?"#fdebd0":"white",padding:"4px 8px",borderRadius:"5px",cursor:"pointer",border:`1px solid ${(actObj.cropTypes||[]).includes(ct)?C.orange:C.border}`,fontSize:"12px"}}><input type="checkbox" checked={(actObj.cropTypes||[]).includes(ct)} onChange={e=>{const cts=actObj.cropTypes||[];updateActObj(actName,{cropTypes:e.target.checked?[...cts,ct]:cts.filter(c=>c!==ct)});}} style={{accentColor:C.orange}}/>{ct}</label>)}</div>
+                        <div style={{fontSize:"13px",fontWeight:"700",color:C.navy,marginBottom:"10px"}}>Step 2 — Crop Types per Greenhouse:</div>
+                        <p style={{fontSize:"12px",color:C.textMid,marginBottom:"10px"}}>For each greenhouse, select which crop types this staff can work with for this activity. By default all crops are selected.</p>
+                        <div style={{display:"flex",flexDirection:"column",gap:"8px"}}>
+                          {activeGHs.map(gh=>{
+                            const ghObj=ghList.find(g=>g.name===gh);
+                            // Show only crops that belong to this GH (if GH has crops defined), else show all
+                            const availableCrops=ghObj?.cropTypes?.length>0?ghObj.cropTypes:cropTypes;
+                            const selectedCrops=getGhCrops(actObj,gh);
+                            return(
+                              <div key={gh} style={{background:"#fafafa",border:`1px solid ${C.border}`,borderRadius:"8px",padding:"10px 12px"}}>
+                                <div style={{display:"flex",alignItems:"center",gap:"10px",flexWrap:"wrap"}}>
+                                  <span style={{fontWeight:"700",color:C.navy,fontSize:"13px",minWidth:"120px"}}>{gh}</span>
+                                  <div style={{display:"flex",gap:"5px",flexWrap:"wrap"}}>
+                                    {availableCrops.map(ct=>{
+                                      const isSel=selectedCrops.includes(ct);
+                                      return(
+                                        <label key={ct} style={{display:"flex",alignItems:"center",gap:"3px",background:isSel?"#fdebd0":"white",padding:"3px 8px",borderRadius:"5px",cursor:"pointer",border:`1px solid ${isSel?C.orange:C.border}`,fontSize:"12px"}}>
+                                          <input type="checkbox" checked={isSel}
+                                            onChange={e=>{
+                                              const newCrops=e.target.checked?[...selectedCrops,ct]:selectedCrops.filter(c=>c!==ct);
+                                              setGhCrops(actName,gh,newCrops);
+                                            }}
+                                            style={{accentColor:C.orange}}/>{ct}
+                                        </label>
+                                      );
+                                    })}
+                                  </div>
+                                  {availableCrops.length===0&&<span style={{fontSize:"12px",color:C.textLight,fontStyle:"italic"}}>No crops assigned to this GH yet — go to Edit tab to add crop types to greenhouses.</span>}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
                     </div>
                   )}
@@ -1738,6 +1913,7 @@ function StaffProfilePopup({selectedStaff,setSelectedStaff,staff,setStaff,activi
             })}
           </div>
         </div>
+
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:"10px",paddingTop:"14px",borderTop:`1px solid ${C.border}`}}>
           <button onClick={()=>{if(window.confirm(`Remove ${selectedStaff.name}?`)){setStaff(staff.filter(x=>x.id!==selectedStaff.id));setSelectedStaff(null);}}} style={btn(false,C.red)}>🗑️ Remove Staff</button>
           <button onClick={()=>setSelectedStaff(null)} style={btn(false,C.green)}>✓ Done</button>

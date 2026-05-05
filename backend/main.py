@@ -149,7 +149,8 @@ def staff_eligible_for_task(s, activity, gh_name, gh_crops):
     Returns True only if staff has:
       1. The activity
       2. The greenhouse (or allGreenhouses=True) for that activity
-      3. At least one matching crop type for that activity (if gh_crops provided)
+      3. At least one matching crop type for that activity in that GH
+         Supports both old flat cropTypes and new per-GH ghCropTypes model.
     """
     for act_obj in s.get("activities", []):
         if not isinstance(act_obj, dict):
@@ -163,9 +164,15 @@ def staff_eligible_for_task(s, activity, gh_name, gh_crops):
             gh_ok = gh_name in act_obj.get("greenhouses", [])
         if not gh_ok:
             continue
-        # Check crop type — if gh has crops defined, staff must match at least one
+        # Check crop type
         if gh_crops:
-            staff_crops = set(act_obj.get("cropTypes", []))
+            # New model: ghCropTypes = { "GH-01": ["Tomato Cherry"], ... }
+            gh_crop_types = act_obj.get("ghCropTypes", {})
+            if gh_crop_types:
+                staff_crops = set(gh_crop_types.get(gh_name, []))
+            else:
+                # Fallback: old flat cropTypes
+                staff_crops = set(act_obj.get("cropTypes", []))
             if not any(ct in staff_crops for ct in gh_crops):
                 continue
         return True
@@ -180,16 +187,18 @@ def check_eligibility_details(s, activity, gh_name, gh_crops):
         if act_obj.get("activity") != activity:
             continue
         has_activity = True
-        # Check GH
         if act_obj.get("allGreenhouses"):
             gh_ok = True
         else:
             gh_ok = gh_name in act_obj.get("greenhouses", [])
         if not gh_ok:
             return {"eligible": False, "reason": f"Not qualified for {gh_name} under {activity}"}
-        # Check crop
         if gh_crops:
-            staff_crops = set(act_obj.get("cropTypes", []))
+            gh_crop_types = act_obj.get("ghCropTypes", {})
+            if gh_crop_types:
+                staff_crops = set(gh_crop_types.get(gh_name, []))
+            else:
+                staff_crops = set(act_obj.get("cropTypes", []))
             missing = [ct for ct in gh_crops if ct not in staff_crops]
             if missing:
                 return {"eligible": False, "reason": f"Missing crop types for {activity} in {gh_name}: {', '.join(missing)}"}
