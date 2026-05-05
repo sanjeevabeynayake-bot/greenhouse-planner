@@ -277,6 +277,40 @@ export default function App() {
     setGenerating(false);
   };
 
+  // Rebuild schedule when GM edits OT — replace OT slots in schedule with updated entries
+  const rebuildScheduleFromOT=async(updatedEntries)=>{
+    if(!schedule)return;
+    setGenerating(true);
+    try{
+      // Remove all existing OT slots from schedule
+      const base={};
+      Object.entries(schedule).forEach(([day,assignments])=>{
+        base[day]=assignments.filter(a=>!a.isOT);
+      });
+      // Re-add updated OT entries
+      updatedEntries.forEach(ot=>{
+        const day=ot.day;
+        if(!base[day])return;
+        // Remove any matching unassigned slot first
+        const idx=base[day].findIndex(a=>a.unassigned&&a.greenhouse===ot.greenhouse&&a.activity===ot.activity);
+        if(idx>=0){
+          const rem=base[day][idx].hours-ot.hours;
+          if(rem>0.01)base[day][idx]={...base[day][idx],hours:rem};
+          else base[day].splice(idx,1);
+        }
+        base[day].push({
+          staffId:ot.staffId,staffName:ot.staffName,
+          greenhouse:ot.greenhouse,activity:ot.activity,
+          cropType:ot.cropType||null,hours:ot.hours,
+          transitionMins:0,unassigned:false,reoptimised:false,isOT:true
+        });
+      });
+      setSchedule(base);
+      setScheduleStale(false);
+    }catch(e){console.warn("Rebuild failed:",e.message);}
+    setGenerating(false);
+  };
+
   const btn=(active,color)=>({padding:"7px 14px",background:active?"#2ecc71":(color||C.blue),color:"white",border:"none",borderRadius:"5px",cursor:"pointer",margin:"0 3px",fontSize:"13px",fontWeight:"500"});
   const card={background:C.white,borderRadius:"10px",padding:"20px",marginBottom:"18px",boxShadow:"0 2px 8px rgba(0,0,0,0.07)"};
   const inp={padding:"6px 10px",border:`1px solid ${C.border}`,borderRadius:"5px",fontSize:"13px",outline:"none"};
@@ -658,6 +692,7 @@ export default function App() {
             overtimeEntries={overtimeEntries} setOvertimeEntries={setOvertimeEntries}
             role={role} activeWeek={activeWeek} activeWeekIndex={activeWeekIndex}
             generating={generating} setGenerating={setGenerating}
+            rebuildScheduleFromOT={rebuildScheduleFromOT}
             btn={btn} inp={inp} card={card} C={C} API={API} fmtDate={fmtDate}/>
         )}
 
@@ -1088,7 +1123,7 @@ function DemandPage({ghList,activities,cropTypes,demand,setDemand,cycles,setCycl
 // ═══════════════════════════════════════════════════════════════════════════════
 // OVERTIME PAGE — with OT eligibility warning + overlap check + 30hr cap
 // ═══════════════════════════════════════════════════════════════════════════════
-function OvertimePage({staff,ghList,activities,schedule,absences,overtimeEntries,setOvertimeEntries,role,activeWeek,activeWeekIndex,generating,setGenerating,btn,inp,card,C,API,fmtDate}){
+function OvertimePage({staff,ghList,activities,schedule,absences,overtimeEntries,setOvertimeEntries,role,activeWeek,activeWeekIndex,generating,setGenerating,rebuildScheduleFromOT,btn,inp,card,C,API,fmtDate}){
   const [defaultRate,setDefaultRate]=useState("");
   const [manualEntry,setManualEntry]=useState({staffId:"",greenhouse:"",activity:"",day:"Monday",hours:"",ratePerHour:""});
   const [showAddManual,setShowAddManual]=useState(false);
@@ -1136,15 +1171,26 @@ function OvertimePage({staff,ghList,activities,schedule,absences,overtimeEntries
     setGenerating(false);
   };
 
-  const deleteEntry=(id)=>setOvertimeEntries(overtimeEntries.filter(e=>e.id!==id));
+  const deleteEntry=(id)=>{
+    const updated=overtimeEntries.filter(e=>e.id!==id);
+    setOvertimeEntries(updated);
+    rebuildScheduleFromOT(updated);
+  };
 
-  const updateEntry=(id,changes)=>setOvertimeEntries(overtimeEntries.map(e=>{
-    if(e.id!==id)return e;
-    const updated={...e,...changes};
-    if(updated.ratePerHour&&updated.hours)updated.estimatedCost=parseFloat(updated.ratePerHour)*parseFloat(updated.hours);
-    else updated.estimatedCost=null;
-    return updated;
-  }));
+  const updateEntry=(id,changes)=>{
+    const newEntries=overtimeEntries.map(e=>{
+      if(e.id!==id)return e;
+      const updated={...e,...changes};
+      if(updated.ratePerHour&&updated.hours)updated.estimatedCost=parseFloat(updated.ratePerHour)*parseFloat(updated.hours);
+      else updated.estimatedCost=null;
+      return updated;
+    });
+    setOvertimeEntries(newEntries);
+    // Rebuild schedule immediately when GM changes staff/hours
+    if(changes.staffId||changes.hours!==undefined||changes.greenhouse||changes.activity||changes.day){
+      rebuildScheduleFromOT(newEntries);
+    }
+  };
 
   const addManual=async()=>{
     if(!manualEntry.staffId||!manualEntry.greenhouse||!manualEntry.activity)return alert("Please fill in staff, greenhouse and activity.");
@@ -1179,7 +1225,9 @@ function OvertimePage({staff,ghList,activities,schedule,absences,overtimeEntries
       source:"manual",createdAt:new Date().toISOString(),
       gmOverride:!!(eligibilityWarning&&eligibilityWarning.staffId===manualEntry.staffId)
     };
-    setOvertimeEntries([...overtimeEntries,newEntry]);
+    const newEntries=[...overtimeEntries,newEntry];
+    setOvertimeEntries(newEntries);
+    rebuildScheduleFromOT(newEntries);
     setManualEntry({staffId:"",greenhouse:"",activity:"",day:"Monday",hours:"",ratePerHour:""});
     setShowAddManual(false);setEligibilityWarning(null);
   };
