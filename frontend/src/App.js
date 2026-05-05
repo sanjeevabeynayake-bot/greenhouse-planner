@@ -1878,7 +1878,7 @@ function StaffProfilePopup({selectedStaff,setSelectedStaff,staff,setStaff,activi
                           {activeGHs.map(gh=>{
                             const ghObj=ghList.find(g=>g.name===gh);
                             // Show only crops that belong to this GH (if GH has crops defined), else show all
-                            const availableCrops=ghObj?.cropTypes?.length>0?ghObj.cropTypes:cropTypes;
+                            const availableCrops=cropTypes; // Always show all crop types — user picks which apply per GH
                             const selectedCrops=getGhCrops(actObj,gh);
                             return(
                               <div key={gh} style={{background:"#fafafa",border:`1px solid ${C.border}`,borderRadius:"8px",padding:"10px 12px"}}>
