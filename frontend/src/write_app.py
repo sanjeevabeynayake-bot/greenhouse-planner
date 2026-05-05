@@ -187,16 +187,41 @@ export default function App() {
         cropDemand:cropDemand||null
       });
       if(res.data.schedule){
-        setSchedule(res.data.schedule);setScheduleSummary(res.data.summary);
-        if(res.data.summary?.efficiencyScore!=null)setEfficiencyScore(res.data.summary.efficiencyScore);
-        // Warn if no-match slots
-        const warnings=res.data.summary?.noMatchWarnings||[];
-        if(warnings.length>0){
-          const warnMsg=warnings.map(w=>w.message).join("\n");
-          alert(`⚠️ Schedule generated with warnings:\n\n${warnMsg}\n\nThese slots have been marked as unassigned.`);
+        let finalSchedule=res.data.schedule;
+        let finalSummary=res.data.summary;
+        // Auto-fill any unassigned slots with OT
+        const unassigned=Object.values(finalSchedule).reduce((s,d)=>s+d.filter(a=>a.unassigned).length,0);
+        if(unassigned>0){
+          try{
+            const otRes=await axios.post(`${API}/overtime/calculate`,{staff,greenhouses:ghList,activities,schedule:finalSchedule,absences});
+            if(otRes.data.entries?.length>0){
+              const merged=JSON.parse(JSON.stringify(finalSchedule));
+              otRes.data.entries.forEach(ot=>{
+                const day=ot.day;
+                if(!merged[day])return;
+                const idx=merged[day].findIndex(a=>a.unassigned&&a.greenhouse===ot.greenhouse&&a.activity===ot.activity);
+                if(idx>=0){
+                  const rem=merged[day][idx].hours-ot.hours;
+                  if(rem>0.01)merged[day][idx]={...merged[day][idx],hours:rem};
+                  else merged[day].splice(idx,1);
+                }
+                merged[day].push({staffId:ot.staffId,staffName:ot.staffName,greenhouse:ot.greenhouse,activity:ot.activity,cropType:ot.cropType||null,hours:ot.hours,transitionMins:0,unassigned:false,reoptimised:false,isOT:true});
+              });
+              finalSchedule=merged;
+              const otHours=otRes.data.entries.reduce((s,e)=>s+e.hours,0);
+              const newUnassigned=Object.values(merged).reduce((s,d)=>s+d.filter(a=>a.unassigned).reduce((s2,a)=>s2+a.hours,0),0);
+              const newAssigned=Object.values(merged).reduce((s,d)=>s+d.filter(a=>!a.unassigned).reduce((s2,a)=>s2+a.hours,0),0);
+              finalSummary={...finalSummary,totalUnassigned:newUnassigned,totalAssigned:newAssigned,totalOTHours:otHours,otStaffCount:new Set(otRes.data.entries.map(e=>e.staffId)).size};
+              setOvertimeEntries(otRes.data.entries.map((e,i)=>({...e,id:`ot_${Date.now()}_${i}`,source:"system"})));
+            }
+          }catch(err){console.warn("OT auto-fill failed:",err.message);}
         }
+        setSchedule(finalSchedule);setScheduleSummary(finalSummary);
+        if(finalSummary?.efficiencyScore!=null)setEfficiencyScore(finalSummary.efficiencyScore);
+        const warnings=res.data.summary?.noMatchWarnings||[];
+        if(warnings.length>0)alert("Some slots could not be filled even with OT:\n"+warnings.map(w=>w.message).join("\n"));
         if(activeCycle&&activeWeek){
-          const updated=cycles.map(cy=>cy.id===activeCycle.id?{...cy,weeks:cy.weeks.map((w,wi)=>wi===activeWeekIndex?{...w,schedule:res.data.schedule,summary:res.data.summary}:w)}:cy);
+          const updated=cycles.map(cy=>cy.id===activeCycle.id?{...cy,weeks:cy.weeks.map((w,wi)=>wi===activeWeekIndex?{...w,schedule:finalSchedule,summary:finalSummary}:w)}:cy);
           setCycles(updated);
         }
         setPage("schedule");
@@ -204,7 +229,6 @@ export default function App() {
     }catch(e){alert("Network error: "+e.message);}
     setGenerating(false);
   };
-
   const reoptimise=async(staffId,affectedDays)=>{
     setGenerating(true);
     try{
@@ -216,17 +240,40 @@ export default function App() {
         disruptionTolerancePct:5
       });
       if(res.data.schedule){
-        setSchedule(res.data.schedule);
-        if(res.data.summary)setScheduleSummary(res.data.summary);
-        const dc=res.data.summary?.disruptionCheck;
-        const u=res.data.summary?.totalUnassigned||0;
+        let finalSchedule=res.data.schedule;
+        let finalSummary=res.data.summary||{};
+        const dc=finalSummary.disruptionCheck;
         if(dc?.exceeded){
-          const proceed=window.confirm(
-            `⚠️ Disruption Warning\n\nEfficiency loss: ${dc.loss}% (threshold: ${dc.threshold}%)\nBaseline: ${dc.baseline}% → New: ${dc.newScore}%\n\nThis change causes more disruption than the 5% tolerance allows.\n\nClick OK to keep this schedule anyway, or Cancel to revert.`
-          );
+          const proceed=window.confirm(`Disruption Warning\n\nEfficiency loss: ${dc.loss}% exceeds ${dc.threshold}% tolerance.\n\nKeep this schedule anyway?`);
           if(!proceed){setGenerating(false);return;}
         }
-        alert(u>0?`Done. ${res.data.affectedTasks} reoptimised. ⚠️ ${u}h still unassigned.`:`Done. ${res.data.affectedTasks} reoptimised with no gaps.`);
+        // Auto-fill remaining unassigned with OT
+        const unassigned=Object.values(finalSchedule).reduce((s,d)=>s+d.filter(a=>a.unassigned).length,0);
+        if(unassigned>0){
+          try{
+            const otRes=await axios.post(`${API}/overtime/calculate`,{staff,greenhouses:ghList,activities,schedule:finalSchedule,absences});
+            if(otRes.data.entries?.length>0){
+              const merged=JSON.parse(JSON.stringify(finalSchedule));
+              otRes.data.entries.forEach(ot=>{
+                const day=ot.day;
+                if(!merged[day])return;
+                const idx=merged[day].findIndex(a=>a.unassigned&&a.greenhouse===ot.greenhouse&&a.activity===ot.activity);
+                if(idx>=0){
+                  const rem=merged[day][idx].hours-ot.hours;
+                  if(rem>0.01)merged[day][idx]={...merged[day][idx],hours:rem};
+                  else merged[day].splice(idx,1);
+                }
+                merged[day].push({staffId:ot.staffId,staffName:ot.staffName,greenhouse:ot.greenhouse,activity:ot.activity,hours:ot.hours,transitionMins:0,unassigned:false,reoptimised:true,isOT:true});
+              });
+              finalSchedule=merged;
+              setOvertimeEntries(prev=>[...prev.filter(e=>!e.id?.startsWith("ot_reopt")),...otRes.data.entries.map((e,i)=>({...e,id:`ot_reopt_${Date.now()}_${i}`,source:"system"}))]);
+            }
+          }catch(err){console.warn("OT auto-fill failed:",err.message);}
+        }
+        setSchedule(finalSchedule);
+        if(finalSummary)setScheduleSummary(finalSummary);
+        const stillUnassigned=Object.values(finalSchedule).reduce((s,d)=>s+d.filter(a=>a.unassigned).length,0);
+        alert(stillUnassigned>0?`Reoptimised. ${stillUnassigned} slot(s) still unassigned — no eligible staff or OT available.`:`Reoptimised successfully. All gaps filled.`);
       }
     }catch(e){alert("Error: "+e.message);}
     setGenerating(false);
@@ -489,10 +536,10 @@ export default function App() {
                 {scheduleSummary&&(
                   <div style={{...card,background:"#eafaf1",padding:"14px",marginBottom:"14px"}}>
                     <div style={{display:"flex",gap:"20px",flexWrap:"wrap",fontSize:"13px",alignItems:"center"}}>
-                      <span>✅ <strong>Assigned:</strong> {scheduleSummary.totalAssigned}h</span>
+                      <span>✅ <strong>Regular:</strong> {scheduleSummary.totalAssigned}h</span>
+                      {scheduleSummary.totalOTHours>0&&<span style={{color:C.orange}}>⏱️ <strong>OT:</strong> {scheduleSummary.totalOTHours}h ({scheduleSummary.otStaffCount} staff)</span>}
                       <span style={{color:scheduleSummary.totalUnassigned>0?C.red:C.green}}>{scheduleSummary.totalUnassigned>0?"⚠️":"✓"} <strong>Unassigned:</strong> {scheduleSummary.totalUnassigned}h</span>
                       <span>📊 <strong>Demand:</strong> {scheduleSummary.totalDemand}h</span>
-                      <span>👥 <strong>Capacity:</strong> {scheduleSummary.totalCapacity}h</span>
                       {efficiencyScore!=null&&role==="gm"&&<span style={{color:efficiencyScore>=80?C.green:C.gold,fontWeight:"700"}}>📊 Efficiency: {efficiencyScore}%</span>}
                       {scheduleSummary.generatedAt&&<span style={{color:C.textLight,fontSize:"11px",marginLeft:"auto"}}>Generated: {fmtISOReadable(scheduleSummary.generatedAt)}</span>}
                     </div>
@@ -512,9 +559,9 @@ export default function App() {
                           <thead><tr><TH>Staff ID</TH><TH>Name</TH><TH>Greenhouse</TH><TH>Activity</TH><TH>Crop Type</TH><TH center>Hours</TH><TH center>Transit</TH></tr></thead>
                           <tbody>
                             {assignments.map((a,i)=>(
-                              <tr key={i} style={{background:a.unassigned?"#fde8e8":a.reoptimised?"#fffbea":i%2===0?C.light:C.white}}>
+                              <tr key={i} style={{background:a.unassigned?"#fde8e8":a.isOT?"#fff8ee":a.reoptimised?"#fffbea":i%2===0?C.light:C.white}}>
                                 <td style={{padding:"8px 10px",fontFamily:"monospace",color:a.unassigned?C.red:C.navy,fontSize:"12px"}}>{a.staffId}</td>
-                                <td style={{padding:"8px 10px",fontSize:"13px"}}>{a.unassigned?<span style={{color:C.red}}>⚠️ {a.staffName}</span>:<button onClick={()=>{const s=staff.find(x=>x.id===a.staffId);if(s)setSelectedStaff(s);}} style={{background:"none",border:"none",color:C.blue,cursor:"pointer",textDecoration:"underline",fontSize:"13px",padding:0}}>{a.staffName}</button>}{a.reoptimised&&<span style={{fontSize:"11px",color:C.gold,marginLeft:"6px"}}>↻</span>}</td>
+                                <td style={{padding:"8px 10px",fontSize:"13px"}}>{a.unassigned?<span style={{color:C.red}}>⚠️ {a.staffName}</span>:<button onClick={()=>{const s=staff.find(x=>x.id===a.staffId);if(s)setSelectedStaff(s);}} style={{background:"none",border:"none",color:C.blue,cursor:"pointer",textDecoration:"underline",fontSize:"13px",padding:0}}>{a.staffName}</button>}{a.isOT&&<span style={{fontSize:"11px",color:C.orange,marginLeft:"6px",fontWeight:"700"}}>⏱️OT</span>}{a.reoptimised&&<span style={{fontSize:"11px",color:C.gold,marginLeft:"6px"}}>↻</span>}</td>
                                 <td style={{padding:"8px 10px"}}>{a.greenhouse}</td>
                                 <td style={{padding:"8px 10px"}}>{a.activity}</td>
                                 <td style={{padding:"8px 10px",fontSize:"12px",color:C.textMid}}>{a.cropType||"—"}</td>
