@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
 
 const API = "https://greenhouse-planner-backend.onrender.com";
@@ -14,19 +14,20 @@ const C = {
   textDark:"#1a3a5c",textMid:"#555",textLight:"#888"
 };
 
-// Date helpers
 const fmtDate=(iso)=>{if(!iso)return"";const d=new Date(iso);return d.toLocaleDateString("en-AU",{weekday:"short",day:"2-digit",month:"short",year:"numeric"});};
 const fmtDateShort=(iso)=>{if(!iso)return"";const d=new Date(iso);return d.toLocaleDateString("en-AU",{day:"2-digit",month:"short"});};
 const addDays=(iso,n)=>{const d=new Date(iso);d.setDate(d.getDate()+n);return d.toISOString().split("T")[0];};
 const todayISO=()=>new Date().toISOString().split("T")[0];
 const fmtISOReadable=(iso)=>{if(!iso)return"";try{return new Date(iso).toLocaleString("en-AU",{timeZone:"Australia/Adelaide",day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit",hour12:true});}catch{return iso;}};
+const buildWeekDates=(startDate)=>{if(!startDate)return{};const map={};ALL_DAYS.forEach((day,i)=>{map[day]=addDays(startDate,i);});return map;};
 
-// Build week day-date map from a start date
-const buildWeekDates=(startDate)=>{
-  if(!startDate)return{};
-  const map={};
-  ALL_DAYS.forEach((day,i)=>{map[day]=addDays(startDate,i);});
-  return map;
+// ─── JSON Export helper ───────────────────────────────────────────────────────
+const downloadJSON=(data,filename)=>{
+  const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url;a.download=filename;a.click();
+  URL.revokeObjectURL(url);
 };
 
 export default function App() {
@@ -50,16 +51,22 @@ export default function App() {
   const [scheduleStale,setScheduleStale]=useState(false);
   const [adelaideTime,setAdelaideTime]=useState("");
   const [quarantine,setQuarantine]=useState([]);
-  // Cycle state: [{id,name,startDate,status,weeks:[{weekIndex,startDate,demand,schedule,summary,ghCrops}]}]
+  const [quarantineHistory,setQuarantineHistory]=useState([]);
   const [cycles,setCycles]=useState([]);
   const [activeCycleId,setActiveCycleId]=useState(null);
   const [activeWeekIndex,setActiveWeekIndex]=useState(0);
-  // Overtime entries per cycle+week
   const [overtimeEntries,setOvertimeEntries]=useState([]);
+  const [backupReminder,setBackupReminder]=useState(false);
+  const [efficiencyScore,setEfficiencyScore]=useState(null);
+  // Import state
+  const [importMode,setImportMode]=useState(null); // null | 'json' | 'csv'
+  const [importPreview,setImportPreview]=useState(null);
+  const [importData,setImportData]=useState(null);
+  const [importMergeMode,setImportMergeMode]=useState("replace");
 
   useEffect(()=>{
     const tick=()=>setAdelaideTime(new Date().toLocaleString("en-AU",{timeZone:"Australia/Adelaide",weekday:"short",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:true}));
-    tick(); const t=setInterval(tick,1000); return ()=>clearInterval(t);
+    tick();const t=setInterval(tick,1000);return()=>clearInterval(t);
   },[]);
 
   useEffect(()=>{
@@ -74,9 +81,10 @@ export default function App() {
       if(d.demand)setDemand(d.demand);
       if(d.absences)setAbsences(d.absences);
       if(d.schedule)setSchedule(d.schedule);
-      if(d.scheduleSummary)setScheduleSummary(d.scheduleSummary);
+      if(d.scheduleSummary){setScheduleSummary(d.scheduleSummary);if(d.scheduleSummary.efficiencyScore!=null)setEfficiencyScore(d.scheduleSummary.efficiencyScore);}
       if(d.settings)setTolerance(d.settings.tolerance||5);
       if(d.quarantine)setQuarantine(d.quarantine);
+      if(d.quarantineHistory)setQuarantineHistory(d.quarantineHistory);
       if(d.cycles?.length>0){setCycles(d.cycles);setActiveCycleId(d.activeCycleId||d.cycles[0]?.id);}
     }).catch(()=>{}).finally(()=>setLoading(false));
   },[]);
@@ -104,24 +112,87 @@ export default function App() {
   const totalCapacity=staff.reduce((sum,s)=>sum+ALL_DAYS.reduce((ds,day)=>ds+(s.dayHours?.[day]??(["Saturday","Sunday"].includes(day)?0:s.hoursPerDay??7)),0),0);
   const totalDemand=Object.values(demand).reduce((sum,acts)=>sum+Object.values(acts||{}).reduce((s,v)=>s+(parseInt(v)||0),0),0);
 
-  // Active cycle and week helpers
   const activeCycle=cycles.find(c=>c.id===activeCycleId)||cycles[0]||null;
   const activeWeek=activeCycle?.weeks?.[activeWeekIndex]||null;
   const activeWeekDates=activeWeek?buildWeekDates(activeWeek.startDate):{};
 
   const saveData=async()=>{
-    await axios.post(`${API}/data`,{staff,greenhouses:ghList,activities,cropTypes,clusters,clusterTransitions,demand,absences,schedule,scheduleSummary,quarantine,cycles,activeCycleId,settings:{tolerance}});
+    await axios.post(`${API}/data`,{staff,greenhouses:ghList,activities,cropTypes,clusters,clusterTransitions,demand,absences,schedule,scheduleSummary,quarantine,quarantineHistory,cycles,activeCycleId,settings:{tolerance}});
     setSaved(true);setTimeout(()=>setSaved(false),2000);
+    setBackupReminder(true);
   };
 
-  const generateSchedule=async(flatDemand)=>{
+  // ─── JSON Export ──────────────────────────────────────────────────────────
+  const exportBackup=()=>{
+    const backup={
+      exportedAt:new Date().toLocaleString("en-AU",{timeZone:"Australia/Adelaide"}),
+      version:"2.0",
+      data:{staff,greenhouses:ghList,activities,cropTypes,clusters,clusterTransitions,
+            demand,absences,schedule,scheduleSummary,quarantine,quarantineHistory,
+            cycles,activeCycleId,settings:{tolerance}}
+    };
+    const ts=new Date().toLocaleDateString("en-AU").replace(/\//g,"-");
+    downloadJSON(backup,`greenhouse-backup-${ts}.json`);
+    setBackupReminder(false);
+  };
+
+  // ─── JSON Import ──────────────────────────────────────────────────────────
+  const handleJSONFileRead=(file)=>{
+    const reader=new FileReader();
+    reader.onload=(e)=>{
+      try{
+        const parsed=JSON.parse(e.target.result);
+        const data=parsed.data||parsed;
+        setImportData(data);
+        // Build preview client-side
+        const incoming=data.staff||[];
+        const currentIds=new Set(staff.map(s=>s.id));
+        const preview=incoming.map(s=>({id:s.id,name:s.name,status:currentIds.has(s.id)?"duplicate":"new",activities:s.activities?.length||0}));
+        setImportPreview({
+          staffPreview:preview.slice(0,30),
+          incomingStaffCount:incoming.length,
+          currentStaffCount:staff.length,
+          newCount:preview.filter(x=>x.status==="new").length,
+          duplicateCount:preview.filter(x=>x.status==="duplicate").length,
+          hasCycles:(data.cycles||[]).length>0,
+          cycleCount:(data.cycles||[]).length,
+          ghCount:(data.greenhouses||[]).length,
+        });
+        setImportMode("json");
+      }catch(err){alert("Invalid JSON file: "+err.message);}
+    };
+    reader.readAsText(file);
+  };
+
+  const commitImport=async()=>{
+    if(!importData)return;
+    try{
+      const res=await axios.post(`${API}/import`,{data:importData,mode:importMergeMode});
+      if(res.data.error){alert("Import error: "+res.data.error);return;}
+      alert(res.data.message+"\n\nPage will reload to show imported data.");
+      window.location.reload();
+    }catch(e){alert("Import failed: "+e.message);}
+  };
+
+  const generateSchedule=async(flatDemand,cropDemand)=>{
     setGenerating(true);setScheduleStale(false);
     const demandToUse=flatDemand||demand;
     try{
-      const res=await axios.post(`${API}/optimise`,{staff,greenhouses:ghList,activities,demand:demandToUse,absences,clusters,clusterTransitions,tolerance,quarantine,currentDate:new Date().toLocaleString("en-AU",{timeZone:"Australia/Adelaide"})});
+      const res=await axios.post(`${API}/optimise`,{
+        staff,greenhouses:ghList,activities,demand:demandToUse,
+        absences,clusters,clusterTransitions,tolerance,quarantine,
+        currentDate:new Date().toLocaleString("en-AU",{timeZone:"Australia/Adelaide"}),
+        cropDemand:cropDemand||null
+      });
       if(res.data.schedule){
         setSchedule(res.data.schedule);setScheduleSummary(res.data.summary);
-        // Save schedule into active week
+        if(res.data.summary?.efficiencyScore!=null)setEfficiencyScore(res.data.summary.efficiencyScore);
+        // Warn if no-match slots
+        const warnings=res.data.summary?.noMatchWarnings||[];
+        if(warnings.length>0){
+          const warnMsg=warnings.map(w=>w.message).join("\n");
+          alert(`⚠️ Schedule generated with warnings:\n\n${warnMsg}\n\nThese slots have been marked as unassigned.`);
+        }
         if(activeCycle&&activeWeek){
           const updated=cycles.map(cy=>cy.id===activeCycle.id?{...cy,weeks:cy.weeks.map((w,wi)=>wi===activeWeekIndex?{...w,schedule:res.data.schedule,summary:res.data.summary}:w)}:cy);
           setCycles(updated);
@@ -135,8 +206,26 @@ export default function App() {
   const reoptimise=async(staffId,affectedDays)=>{
     setGenerating(true);
     try{
-      const res=await axios.post(`${API}/reoptimise`,{existingSchedule:schedule,affectedStaffId:staffId,affectedDays,staff,greenhouses:ghList,activities,demand,absences,clusters,clusterTransitions,tolerance,quarantine,currentDate:new Date().toLocaleString("en-AU",{timeZone:"Australia/Adelaide"})});
-      if(res.data.schedule){setSchedule(res.data.schedule);if(res.data.summary)setScheduleSummary(res.data.summary);const u=res.data.summary?.totalUnassigned||0;alert(u>0?`Done. ${res.data.affectedTasks} reoptimised. ⚠️ ${u}h still unassigned.`:`Done. ${res.data.affectedTasks} reoptimised with no gaps.`);}
+      const res=await axios.post(`${API}/reoptimise`,{
+        existingSchedule:schedule,affectedStaffId:staffId,affectedDays,
+        staff,greenhouses:ghList,activities,demand,absences,
+        clusters,clusterTransitions,tolerance,quarantine,
+        currentDate:new Date().toLocaleString("en-AU",{timeZone:"Australia/Adelaide"}),
+        disruptionTolerancePct:5
+      });
+      if(res.data.schedule){
+        setSchedule(res.data.schedule);
+        if(res.data.summary)setScheduleSummary(res.data.summary);
+        const dc=res.data.summary?.disruptionCheck;
+        const u=res.data.summary?.totalUnassigned||0;
+        if(dc?.exceeded){
+          const proceed=window.confirm(
+            `⚠️ Disruption Warning\n\nEfficiency loss: ${dc.loss}% (threshold: ${dc.threshold}%)\nBaseline: ${dc.baseline}% → New: ${dc.newScore}%\n\nThis change causes more disruption than the 5% tolerance allows.\n\nClick OK to keep this schedule anyway, or Cancel to revert.`
+          );
+          if(!proceed){setGenerating(false);return;}
+        }
+        alert(u>0?`Done. ${res.data.affectedTasks} reoptimised. ⚠️ ${u}h still unassigned.`:`Done. ${res.data.affectedTasks} reoptimised with no gaps.`);
+      }
     }catch(e){alert("Error: "+e.message);}
     setGenerating(false);
   };
@@ -148,6 +237,65 @@ export default function App() {
   const TD=({children,i,center,color})=><td style={{padding:"8px 10px",background:i%2===0?C.light:C.white,textAlign:center?"center":"left",fontSize:"13px",color:color||"inherit"}}>{children}</td>;
 
   if(loading)return(<div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh",background:C.bg}}><div style={{textAlign:"center"}}><div style={{fontSize:"48px",marginBottom:"16px"}}>🌿</div><div style={{color:C.textMid,fontSize:"18px"}}>Loading Greenhouse Planner...</div></div></div>);
+
+  // ─── Import Modal ─────────────────────────────────────────────────────────
+  if(importMode==="json"&&importPreview){
+    return(
+      <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.7)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2000}}>
+        <div style={{background:"white",borderRadius:"14px",padding:"28px",maxWidth:"680px",width:"95%",maxHeight:"90vh",overflowY:"auto"}}>
+          <h2 style={{color:C.navy,marginBottom:"4px"}}>📥 Import Preview</h2>
+          <p style={{color:C.textMid,fontSize:"13px",marginBottom:"20px"}}>Review what will be imported before committing.</p>
+
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"10px",marginBottom:"20px"}}>
+            {[[importPreview.incomingStaffCount,"Staff in file",C.blue],
+              [importPreview.newCount,"New (will add)",C.green],
+              [importPreview.duplicateCount,"Duplicates",C.orange]].map(([v,l,c])=>(
+              <div key={l} style={{background:"#f8f9fa",borderRadius:"8px",padding:"12px",textAlign:"center",border:`2px solid ${c}33`}}>
+                <div style={{fontSize:"28px",fontWeight:"800",color:c}}>{v}</div>
+                <div style={{fontSize:"12px",color:C.textMid}}>{l}</div>
+              </div>
+            ))}
+          </div>
+
+          {importPreview.hasCycles&&<div style={{background:"#eafaf1",borderRadius:"6px",padding:"10px",marginBottom:"14px",fontSize:"13px",color:C.teal}}>✅ File includes {importPreview.cycleCount} planning cycle(s) — will also be restored.</div>}
+
+          <div style={{marginBottom:"16px"}}>
+            <label style={{display:"block",fontSize:"13px",fontWeight:"700",color:C.navy,marginBottom:"8px"}}>Import Mode:</label>
+            <div style={{display:"flex",gap:"12px"}}>
+              {[["replace","🔄 Replace All","Wipe current data and load file completely"],["merge","➕ Merge","Add new staff only, skip duplicate IDs"]].map(([v,l,desc])=>(
+                <label key={v} style={{flex:1,display:"flex",gap:"10px",padding:"12px",border:`2px solid ${importMergeMode===v?C.teal:C.border}`,borderRadius:"8px",cursor:"pointer",background:importMergeMode===v?"#f0fdfb":"white"}}>
+                  <input type="radio" value={v} checked={importMergeMode===v} onChange={()=>setImportMergeMode(v)} style={{marginTop:"2px"}}/>
+                  <div><div style={{fontWeight:"700",color:C.navy,fontSize:"13px"}}>{l}</div><div style={{fontSize:"12px",color:C.textMid,marginTop:"2px"}}>{desc}</div></div>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {importMergeMode==="replace"&&<div style={{background:"#fff5f5",border:`1px solid ${C.red}`,borderRadius:"6px",padding:"10px",marginBottom:"14px",fontSize:"12px",color:C.red}}>⚠️ Replace mode will overwrite ALL current staff, greenhouses, cycles and demand data. This cannot be undone.</div>}
+
+          <div style={{marginBottom:"16px",maxHeight:"200px",overflowY:"auto",border:`1px solid ${C.border}`,borderRadius:"6px"}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:"12px"}}>
+              <thead><tr style={{background:C.navy,color:"white"}}><th style={{padding:"7px 10px",textAlign:"left"}}>ID</th><th style={{padding:"7px 10px",textAlign:"left"}}>Name</th><th style={{padding:"7px 10px",textAlign:"center"}}>Activities</th><th style={{padding:"7px 10px",textAlign:"center"}}>Status</th></tr></thead>
+              <tbody>{importPreview.staffPreview.map((s,i)=>(
+                <tr key={s.id} style={{background:i%2===0?C.light:C.white}}>
+                  <td style={{padding:"6px 10px",fontFamily:"monospace",fontSize:"11px"}}>{s.id}</td>
+                  <td style={{padding:"6px 10px"}}>{s.name}</td>
+                  <td style={{padding:"6px 10px",textAlign:"center"}}>{s.activities}</td>
+                  <td style={{padding:"6px 10px",textAlign:"center"}}><span style={{background:s.status==="new"?"#d5f5e3":"#fde8cc",color:s.status==="new"?C.green:C.orange,padding:"2px 8px",borderRadius:"10px",fontSize:"11px",fontWeight:"600"}}>{s.status==="new"?"New ✓":"Duplicate"}</span></td>
+                </tr>
+              ))}</tbody>
+            </table>
+            {importPreview.incomingStaffCount>30&&<div style={{padding:"8px 10px",fontSize:"12px",color:C.textLight,textAlign:"center"}}>Showing first 30 of {importPreview.incomingStaffCount} staff</div>}
+          </div>
+
+          <div style={{display:"flex",gap:"10px",justifyContent:"flex-end"}}>
+            <button onClick={()=>{setImportMode(null);setImportPreview(null);setImportData(null);}} style={btn(false,"#95a5a6")}>Cancel</button>
+            <button onClick={commitImport} style={btn(false,C.green)}>✅ Confirm Import</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if(!role)return(
     <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden"}}>
@@ -172,26 +320,57 @@ export default function App() {
     </div>
   );
 
-  const tabs=[{id:"dashboard",label:"Dashboard",icon:"📊"},{id:"staff",label:"Staff",icon:"👥"},{id:"demand",label:"Demand",icon:"📋"},{id:"schedule",label:"Schedule",icon:"📅"},{id:"absence",label:"Absence",icon:"🏥"},{id:"overtime",label:"Overtime",icon:"⏱️"},{id:"edit",label:"Edit",icon:"✏️"},...(role==="gm"?[{id:"quarantine",label:"Quarantine",icon:"🔴"}]:[])];
+  const tabs=[
+    {id:"dashboard",label:"Dashboard",icon:"📊"},
+    {id:"staff",label:"Staff",icon:"👥"},
+    {id:"demand",label:"Demand",icon:"📋"},
+    {id:"schedule",label:"Schedule",icon:"📅"},
+    {id:"absence",label:"Absence",icon:"🏥"},
+    {id:"overtime",label:"Overtime",icon:"⏱️"},
+    {id:"edit",label:"Edit",icon:"✏️"},
+    ...(role==="gm"?[{id:"quarantine",label:"Quarantine",icon:"🔴"},{id:"backup",label:"Backup",icon:"💾"}]:[{id:"backup",label:"Backup",icon:"💾"}])
+  ];
 
   return(
     <div style={{background:C.bg,minHeight:"100vh",fontFamily:"'Segoe UI',system-ui,sans-serif"}}>
+      {/* ── Navbar ── */}
       <div style={{background:C.navy,padding:"0 16px",display:"flex",alignItems:"stretch",gap:"2px",flexWrap:"wrap",boxShadow:"0 2px 8px rgba(0,0,0,0.2)"}}>
         <div style={{display:"flex",alignItems:"center",paddingRight:"16px",borderRight:"1px solid rgba(255,255,255,0.15)",marginRight:"8px"}}>
           <span style={{color:"white",fontWeight:"700",fontSize:"15px"}}>🌿 Greenhouse Planner</span>
         </div>
         {tabs.map(t=>(
-          <button key={t.id} onClick={()=>setPage(t.id)} style={{background:page===t.id?"rgba(255,255,255,0.15)":"transparent",color:page===t.id?"white":"rgba(255,255,255,0.65)",border:"none",borderBottom:page===t.id?`3px solid ${t.id==="quarantine"?"#ff6b6b":"#2ecc71"}`:"3px solid transparent",padding:"12px 14px",cursor:"pointer",fontSize:"13px",fontWeight:"500",...(t.id==="quarantine"?{color:page===t.id?"#ff6b6b":"rgba(255,100,100,0.8)"}:{})}}>
-            {t.icon} {t.label}{t.id==="schedule"&&scheduleStale&&<span style={{color:C.gold,marginLeft:"4px"}}>●</span>}
+          <button key={t.id} onClick={()=>setPage(t.id)} style={{
+            background:page===t.id?"rgba(255,255,255,0.15)":"transparent",
+            color:page===t.id?"white":t.id==="quarantine"?"rgba(255,100,100,0.8)":t.id==="backup"&&backupReminder?"#f39c12":"rgba(255,255,255,0.65)",
+            border:"none",
+            borderBottom:page===t.id?`3px solid ${t.id==="quarantine"?"#ff6b6b":t.id==="backup"?"#f39c12":"#2ecc71"}`:"3px solid transparent",
+            padding:"12px 14px",cursor:"pointer",fontSize:"13px",fontWeight:"500"
+          }}>
+            {t.icon} {t.label}
+            {t.id==="schedule"&&scheduleStale&&<span style={{color:C.gold,marginLeft:"4px"}}>●</span>}
+            {t.id==="backup"&&backupReminder&&<span style={{color:C.gold,marginLeft:"4px",fontSize:"10px"}}>●</span>}
           </button>
         ))}
         <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:"10px",padding:"8px 0"}}>
           <span style={{color:"rgba(255,255,255,0.4)",fontSize:"11px"}}>{adelaideTime}</span>
+          {efficiencyScore!=null&&role==="gm"&&<span style={{background:"rgba(46,204,113,0.2)",color:"#2ecc71",padding:"3px 10px",borderRadius:"12px",fontSize:"12px",fontWeight:"700",border:"1px solid rgba(46,204,113,0.4)"}}>📊 {efficiencyScore}%</span>}
           <span style={{color:"#aed6f1",fontSize:"12px",borderLeft:"1px solid rgba(255,255,255,0.2)",paddingLeft:"10px"}}>{role==="gm"?"👔 General Manager":"👷 Labour Manager"}</span>
           <button onClick={saveData} style={{...btn(false,saved?"#27ae60":C.orange),fontSize:"12px"}}>{saved?"✓ Saved!":"💾 Save"}</button>
+          <button onClick={exportBackup} style={{...btn(false,C.teal),fontSize:"12px"}}>📤 Export</button>
           <button onClick={()=>{setRole(null);setPage("dashboard");}} style={{...btn(false,"#c0392b"),fontSize:"12px"}}>Exit</button>
         </div>
       </div>
+
+      {/* ── Backup reminder banner ── */}
+      {backupReminder&&(
+        <div style={{background:"#fffbea",borderBottom:`2px solid ${C.gold}`,padding:"8px 20px",display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:"13px"}}>
+          <span>⚠️ <strong>Reminder:</strong> You have unsaved backup. Export your data before pushing to GitHub to avoid losing it on Render redeploy.</span>
+          <div style={{display:"flex",gap:"8px"}}>
+            <button onClick={exportBackup} style={{...btn(false,C.gold),fontSize:"12px",padding:"5px 12px"}}>📤 Export Now</button>
+            <button onClick={()=>setBackupReminder(false)} style={{background:"none",border:"none",cursor:"pointer",color:C.textLight,fontSize:"18px",padding:"0 4px"}}>✕</button>
+          </div>
+        </div>
+      )}
 
       <div style={{padding:"20px"}}>
 
@@ -208,6 +387,22 @@ export default function App() {
                 </div>
               ))}
             </div>
+
+            {/* Efficiency score card — GM only */}
+            {role==="gm"&&efficiencyScore!=null&&(
+              <div style={{...card,borderTop:`4px solid ${efficiencyScore>=80?C.green:efficiencyScore>=60?C.gold:C.red}`,marginBottom:"16px"}}>
+                <h4 style={{color:C.navy,margin:"0 0 10px 0"}}>📊 Cycle Efficiency Score</h4>
+                <div style={{display:"flex",alignItems:"center",gap:"20px"}}>
+                  <div style={{fontSize:"52px",fontWeight:"900",color:efficiencyScore>=80?C.green:efficiencyScore>=60?C.gold:C.red}}>{efficiencyScore}%</div>
+                  <div>
+                    <div style={{background:"#eee",borderRadius:"8px",overflow:"hidden",height:"20px",width:"200px",marginBottom:"6px"}}><div style={{width:`${efficiencyScore}%`,background:efficiencyScore>=80?C.green:efficiencyScore>=60?C.gold:C.red,height:"100%",transition:"width 0.5s"}}/></div>
+                    <div style={{fontSize:"12px",color:C.textMid}}>{efficiencyScore>=80?"✅ Excellent allocation":"⚠️ Review unassigned slots"}</div>
+                    <div style={{fontSize:"11px",color:C.textLight,marginTop:"2px"}}>Weighted: 60% coverage + 40% utilisation</div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"16px",marginBottom:"20px"}}>
               <div style={{...card,borderTop:`4px solid ${C.blue}`}}>
                 <h4 style={{color:C.navy,margin:"0 0 14px 0"}}>📊 Capacity vs Demand</h4>
@@ -229,12 +424,6 @@ export default function App() {
                   <div style={{display:"flex",justifyContent:"space-between",marginBottom:"6px"}}><label style={{fontSize:"13px",color:C.textMid}}>Whole-day preference tolerance:</label><strong style={{color:C.orange}}>{tolerance}%</strong></div>
                   <input type="range" min="0" max="20" value={tolerance} onChange={e=>setTolerance(parseInt(e.target.value))} style={{width:"100%",accentColor:C.orange}}/>
                   <div style={{display:"flex",justifyContent:"space-between",fontSize:"11px",color:"#aaa",marginTop:"4px"}}><span>0% — Pure optimisation</span><span>20% — Max human factors</span></div>
-                  <div style={{marginTop:"8px",padding:"8px",background:"#fef9f0",borderRadius:"6px",fontSize:"12px",color:C.textMid}}>
-                    {tolerance===0&&"⚡ Pure optimisation — cluster preferences ignored."}
-                    {tolerance>0&&tolerance<=5&&`✓ Balanced (${tolerance}%) — staff kept in cluster unless it costs more than ${tolerance}% efficiency.`}
-                    {tolerance>5&&tolerance<=12&&`👥 Staff-friendly (${tolerance}%) — strong preference to keep staff in one location all day.`}
-                    {tolerance>12&&`🏠 Maximum stability (${tolerance}%) — staff almost always stay in one greenhouse.`}
-                  </div>
                 </div>
                 <div style={{borderTop:`1px solid ${C.border}`,paddingTop:"10px",fontSize:"13px"}}>
                   <div style={{display:"flex",justifyContent:"space-between",marginBottom:"4px"}}><span style={{color:C.textMid}}>High versatility staff (75%+):</span><strong style={{color:C.green}}>{staff.filter(s=>calcVersatility(s)>=75).length}</strong></div>
@@ -242,26 +431,9 @@ export default function App() {
                 </div>
               </div>
             </div>
-            <div style={card}>
-              <h4 style={{color:C.navy,margin:"0 0 12px 0"}}>🗺️ Greenhouse Clusters</h4>
-              <div style={{display:"flex",gap:"14px",flexWrap:"wrap"}}>
-                {clusters.map((cl,ci)=>(
-                  <div key={ci} style={{background:C.light,border:`1px solid ${C.border}`,borderRadius:"8px",padding:"12px",minWidth:"200px"}}>
-                    <div style={{display:"flex",gap:"6px",marginBottom:"8px"}}><input value={cl.name} onChange={e=>{const c=[...clusters];c[ci]={...c[ci],name:e.target.value};setClusters(c);}} style={{...inp,flex:1,fontSize:"13px"}}/><button onClick={()=>setClusters(clusters.filter((_,j)=>j!==ci))} style={btn(false,C.red)}>✕</button></div>
-                    <div style={{fontSize:"11px",color:C.textLight,marginBottom:"6px"}}>Greenhouses in cluster:</div>
-                    <div style={{display:"flex",flexWrap:"wrap",gap:"4px"}}>
-                      {ghNames.map(gh=>(
-                        <label key={gh} style={{display:"flex",alignItems:"center",gap:"3px",background:(cl.greenhouses||[]).includes(gh)?"#d5f0ff":"white",padding:"2px 6px",borderRadius:"4px",border:`1px solid ${(cl.greenhouses||[]).includes(gh)?C.blue:C.border}`,cursor:"pointer",fontSize:"11px"}}>
-                          <input type="checkbox" checked={(cl.greenhouses||[]).includes(gh)} onChange={e=>{const c=[...clusters];const ghs=cl.greenhouses||[];c[ci]={...c[ci],greenhouses:e.target.checked?[...ghs,gh]:ghs.filter(g=>g!==gh)};setClusters(c);}}/>{gh}
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-                <button onClick={()=>setClusters([...clusters,{name:`Cluster ${clusters.length+1}`,greenhouses:[]}])} style={{...btn(false,C.teal),alignSelf:"flex-start"}}>+ Add Cluster</button>
-              </div>
-              {clusters.length===0&&<p style={{color:C.textLight,fontSize:"13px",margin:"8px 0 0 0"}}>No clusters defined.</p>}
-            </div>
+
+            {/* Cluster transition time UI */}
+            <ClusterTransitionUI clusters={clusters} setClusters={setClusters} clusterTransitions={clusterTransitions} setClusterTransitions={setClusterTransitions} ghNames={ghNames} btn={btn} inp={inp} card={card} C={C}/>
           </div>
         )}
 
@@ -292,7 +464,7 @@ export default function App() {
           </div>
         )}
 
-        {/* ══ DEMAND — 3-week cycles + crop rows ══ */}
+        {/* ══ DEMAND ══ */}
         {page==="demand"&&(
           <DemandPage
             ghList={ghList} activities={activities} cropTypes={cropTypes}
@@ -319,8 +491,7 @@ export default function App() {
                       <span style={{color:scheduleSummary.totalUnassigned>0?C.red:C.green}}>{scheduleSummary.totalUnassigned>0?"⚠️":"✓"} <strong>Unassigned:</strong> {scheduleSummary.totalUnassigned}h</span>
                       <span>📊 <strong>Demand:</strong> {scheduleSummary.totalDemand}h</span>
                       <span>👥 <strong>Capacity:</strong> {scheduleSummary.totalCapacity}h</span>
-                      {scheduleSummary.surplusHours>0&&<span style={{color:C.green}}>💚 Surplus: {scheduleSummary.surplusHours}h</span>}
-                      {scheduleSummary.shortfallHours>0&&<span style={{color:C.red}}>🔴 Shortfall: {scheduleSummary.shortfallHours}h</span>}
+                      {efficiencyScore!=null&&role==="gm"&&<span style={{color:efficiencyScore>=80?C.green:C.gold,fontWeight:"700"}}>📊 Efficiency: {efficiencyScore}%</span>}
                       {scheduleSummary.generatedAt&&<span style={{color:C.textLight,fontSize:"11px",marginLeft:"auto"}}>Generated: {fmtISOReadable(scheduleSummary.generatedAt)}</span>}
                     </div>
                   </div>
@@ -336,7 +507,7 @@ export default function App() {
                       </h3>
                       {!assignments.length?<p style={{color:C.textLight,fontSize:"13px"}}>No assignments</p>:(
                         <table style={{width:"100%",borderCollapse:"collapse",fontSize:"13px"}}>
-                          <thead><tr><TH>Staff ID</TH><TH>Name</TH><TH>Greenhouse</TH><TH>Activity</TH><TH center>Hours</TH><TH center>Transit</TH></tr></thead>
+                          <thead><tr><TH>Staff ID</TH><TH>Name</TH><TH>Greenhouse</TH><TH>Activity</TH><TH>Crop Type</TH><TH center>Hours</TH><TH center>Transit</TH></tr></thead>
                           <tbody>
                             {assignments.map((a,i)=>(
                               <tr key={i} style={{background:a.unassigned?"#fde8e8":a.reoptimised?"#fffbea":i%2===0?C.light:C.white}}>
@@ -344,6 +515,7 @@ export default function App() {
                                 <td style={{padding:"8px 10px",fontSize:"13px"}}>{a.unassigned?<span style={{color:C.red}}>⚠️ {a.staffName}</span>:<button onClick={()=>{const s=staff.find(x=>x.id===a.staffId);if(s)setSelectedStaff(s);}} style={{background:"none",border:"none",color:C.blue,cursor:"pointer",textDecoration:"underline",fontSize:"13px",padding:0}}>{a.staffName}</button>}{a.reoptimised&&<span style={{fontSize:"11px",color:C.gold,marginLeft:"6px"}}>↻</span>}</td>
                                 <td style={{padding:"8px 10px"}}>{a.greenhouse}</td>
                                 <td style={{padding:"8px 10px"}}>{a.activity}</td>
+                                <td style={{padding:"8px 10px",fontSize:"12px",color:C.textMid}}>{a.cropType||"—"}</td>
                                 <td style={{padding:"8px 10px",textAlign:"center"}}>{a.hours}h</td>
                                 <td style={{padding:"8px 10px",textAlign:"center",color:a.transitionMins>0?C.gold:C.textLight,fontSize:"12px"}}>{a.transitionMins>0?`${a.transitionMins}min`:"—"}</td>
                               </tr>
@@ -464,7 +636,7 @@ export default function App() {
                 <div style={{maxHeight:"200px",overflowY:"auto",marginBottom:"10px"}}>{activities.map((act,i)=><div key={i} style={{display:"flex",gap:"8px",marginBottom:"6px"}}><input value={act} onChange={e=>{const a=[...activities];a[i]=e.target.value;setActivities(a);}} style={{...inp,flex:1}}/><button onClick={()=>setActivities(activities.filter((_,j)=>j!==i))} style={btn(false,C.red)}>✕</button></div>)}</div>
                 <button onClick={()=>setActivities([...activities,"New Activity"])} style={btn(false,C.green)}>+ Add Activity</button>
               </div>
-              <div style={card}><h3 style={{color:C.navy,marginBottom:"12px"}}>👤 Add New Staff</h3><AddStaffForm staff={staff} setStaff={setStaff} btn={btn} inp={inp}/></div>
+              <div style={card}><h3 style={{color:C.navy,marginBottom:"12px"}}>👤 Add New Staff</h3><AddStaffForm staff={staff} setStaff={setStaff} btn={btn} inp={inp} setBackupReminder={setBackupReminder}/></div>
             </div>
             {staff.length>0&&(
               <div style={{...card,marginTop:"18px"}}>
@@ -475,10 +647,16 @@ export default function App() {
                 </table>
               </div>
             )}
+
+            {/* CSV Bulk Import */}
+            <div style={{...card,marginTop:"18px",borderTop:`4px solid ${C.blue}`}}>
+              <h3 style={{color:C.navy,marginBottom:"8px"}}>📋 Bulk Import Staff (CSV)</h3>
+              <BulkCSVImport staff={staff} setStaff={setStaff} API={API} btn={btn} inp={inp} C={C} setBackupReminder={setBackupReminder}/>
+            </div>
           </div>
         )}
 
-        {/* ══ QUARANTINE (GM only) ══ */}
+        {/* ══ QUARANTINE ══ */}
         {page==="quarantine"&&role==="gm"&&(
           <div>
             <div style={{display:"flex",alignItems:"center",gap:"12px",marginBottom:"16px"}}>
@@ -486,35 +664,112 @@ export default function App() {
               <span style={{background:"#ffe5e5",color:C.red,padding:"4px 10px",borderRadius:"20px",fontSize:"12px",fontWeight:"700"}}>GM ONLY</span>
             </div>
             <div style={card}>
-              <QuarantinePanel staff={staff} ghList={ghList} quarantine={quarantine} setQuarantine={setQuarantine} schedule={schedule} btn={btn} inp={inp} C={C} API={API} adelaideTime={adelaideTime} fmtISOReadable={fmtISOReadable} role={role}/>
+              <QuarantinePanel staff={staff} ghList={ghList} quarantine={quarantine} setQuarantine={setQuarantine} quarantineHistory={quarantineHistory} setQuarantineHistory={setQuarantineHistory} schedule={schedule} btn={btn} inp={inp} C={C} API={API} adelaideTime={adelaideTime} fmtISOReadable={fmtISOReadable} role={role}/>
             </div>
           </div>
+        )}
+
+        {/* ══ BACKUP ══ */}
+        {page==="backup"&&(
+          <BackupPage
+            staff={staff} ghList={ghList} activities={activities} cropTypes={cropTypes}
+            clusters={clusters} clusterTransitions={clusterTransitions}
+            demand={demand} absences={absences} schedule={schedule}
+            scheduleSummary={scheduleSummary} quarantine={quarantine}
+            quarantineHistory={quarantineHistory} cycles={cycles}
+            activeCycleId={activeCycleId} tolerance={tolerance}
+            exportBackup={exportBackup}
+            handleJSONFileRead={handleJSONFileRead}
+            importMergeMode={importMergeMode} setImportMergeMode={setImportMergeMode}
+            btn={btn} inp={inp} card={card} C={C} API={API}
+            adelaideTime={adelaideTime}/>
         )}
 
       </div>
 
       {selectedStaff&&(
-        <StaffProfilePopup selectedStaff={selectedStaff} setSelectedStaff={setSelectedStaff} staff={staff} setStaff={setStaff} activities={activities} ghNames={ghNames} cropTypes={cropTypes} absences={absences} calcVersatility={calcVersatility} btn={btn} inp={inp} C={C} ALL_DAYS={ALL_DAYS} DAY_SHORT={DAY_SHORT}/>
+        <StaffProfilePopup selectedStaff={selectedStaff} setSelectedStaff={setSelectedStaff} staff={staff} setStaff={setStaff} activities={activities} ghNames={ghNames} cropTypes={cropTypes} absences={absences} calcVersatility={calcVersatility} btn={btn} inp={inp} C={C} ALL_DAYS={ALL_DAYS} DAY_SHORT={DAY_SHORT} setBackupReminder={setBackupReminder}/>
       )}
     </div>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// DEMAND PAGE — 3-week cycles + crop type rows per greenhouse
+// CLUSTER TRANSITION UI — in Dashboard
+// ═══════════════════════════════════════════════════════════════════════════════
+function ClusterTransitionUI({clusters,setClusters,clusterTransitions,setClusterTransitions,ghNames,btn,inp,card,C}){
+  const clusterNames=clusters.map(c=>c.name);
+  // Build pairs of clusters for transition time entry
+  const pairs=[];
+  for(let i=0;i<clusterNames.length;i++){
+    for(let j=i+1;j<clusterNames.length;j++){
+      pairs.push([clusterNames[i],clusterNames[j]]);
+    }
+  }
+  return(
+    <div style={card}>
+      <h4 style={{color:C.navy,margin:"0 0 12px 0"}}>🗺️ Greenhouse Clusters & Transition Times</h4>
+      <div style={{display:"flex",gap:"14px",flexWrap:"wrap",marginBottom:"16px"}}>
+        {clusters.map((cl,ci)=>(
+          <div key={ci} style={{background:C.light,border:`1px solid ${C.border}`,borderRadius:"8px",padding:"12px",minWidth:"200px"}}>
+            <div style={{display:"flex",gap:"6px",marginBottom:"8px"}}><input value={cl.name} onChange={e=>{const c=[...clusters];c[ci]={...c[ci],name:e.target.value};setClusters(c);}} style={{...inp,flex:1,fontSize:"13px"}}/><button onClick={()=>setClusters(clusters.filter((_,j)=>j!==ci))} style={btn(false,C.red)}>✕</button></div>
+            <div style={{fontSize:"11px",color:C.textLight,marginBottom:"6px"}}>Greenhouses in cluster:</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:"4px"}}>
+              {ghNames.map(gh=>(
+                <label key={gh} style={{display:"flex",alignItems:"center",gap:"3px",background:(cl.greenhouses||[]).includes(gh)?"#d5f0ff":"white",padding:"2px 6px",borderRadius:"4px",border:`1px solid ${(cl.greenhouses||[]).includes(gh)?C.blue:C.border}`,cursor:"pointer",fontSize:"11px"}}>
+                  <input type="checkbox" checked={(cl.greenhouses||[]).includes(gh)} onChange={e=>{const c=[...clusters];const ghs=cl.greenhouses||[];c[ci]={...c[ci],greenhouses:e.target.checked?[...ghs,gh]:ghs.filter(g=>g!==gh)};setClusters(c);}}/>{gh}
+                </label>
+              ))}
+            </div>
+          </div>
+        ))}
+        <button onClick={()=>setClusters([...clusters,{name:`Cluster ${clusters.length+1}`,greenhouses:[]}])} style={{...btn(false,C.teal),alignSelf:"flex-start"}}>+ Add Cluster</button>
+      </div>
+
+      {/* Cross-cluster transition times */}
+      {pairs.length>0&&(
+        <div>
+          <div style={{fontSize:"13px",fontWeight:"700",color:C.navy,marginBottom:"8px"}}>⏱️ Cross-Cluster Travel Times (minutes)</div>
+          <p style={{fontSize:"12px",color:C.textMid,marginBottom:"10px"}}>Within-cluster moves: 10 min (fixed). Set travel time between clusters below:</p>
+          <div style={{display:"flex",gap:"10px",flexWrap:"wrap"}}>
+            {pairs.map(([a,b])=>{
+              const key=`${a}->${b}`;
+              const val=clusterTransitions[key]||clusterTransitions[`${b}->${a}`]||"";
+              return(
+                <div key={key} style={{display:"flex",alignItems:"center",gap:"8px",background:C.light,padding:"8px 12px",borderRadius:"6px",border:`1px solid ${C.border}`}}>
+                  <span style={{fontSize:"12px",fontWeight:"600",color:C.navy}}>{a}</span>
+                  <span style={{color:C.textLight,fontSize:"12px"}}>↔</span>
+                  <span style={{fontSize:"12px",fontWeight:"600",color:C.navy}}>{b}</span>
+                  <input type="number" min="0" max="120" value={val} placeholder="mins"
+                    onChange={e=>{const mins=parseInt(e.target.value)||0;setClusterTransitions(prev=>({...prev,[key]:mins,[`${b}->${a}`]:mins}));}}
+                    style={{...inp,width:"60px",textAlign:"center",fontSize:"12px"}}/>
+                  <span style={{fontSize:"11px",color:C.textLight}}>min</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      {clusters.length===0&&<p style={{color:C.textLight,fontSize:"13px",margin:"8px 0 0 0"}}>No clusters defined. Add a cluster above.</p>}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DEMAND PAGE
 // ═══════════════════════════════════════════════════════════════════════════════
 function DemandPage({ghList,activities,cropTypes,demand,setDemand,cycles,setCycles,activeCycleId,setActiveCycleId,activeWeekIndex,setActiveWeekIndex,totalCapacity,generating,generateSchedule,setScheduleStale,btn,inp,card,C}){
   const fmtD=(iso)=>{if(!iso)return"";const d=new Date(iso);return d.toLocaleDateString("en-AU",{day:"2-digit",month:"short",year:"numeric"});};
   const addD=(iso,n)=>{const d=new Date(iso);d.setDate(d.getDate()+n);return d.toISOString().split("T")[0];};
-
-  // If no cycles, show setup prompt
   const [newCycleName,setNewCycleName]=useState("Cycle 1");
   const [newCycleStart,setNewCycleStart]=useState(new Date().toISOString().split("T")[0]);
+  const [newCycleActivationDate,setNewCycleActivationDate]=useState("");
 
   const createCycle=()=>{
     const start=newCycleStart;
     const cycle={
       id:`cycle_${Date.now()}`,name:newCycleName,status:"active",
+      activationDate:newCycleActivationDate||null,
       weeks:[0,1,2].map(i=>({weekIndex:i,label:`Week ${i+1}`,startDate:addD(start,i*7),endDate:addD(start,i*7+6),ghCrops:{},demand:{}}))
     };
     const updated=[...cycles,cycle];
@@ -530,6 +785,7 @@ function DemandPage({ghList,activities,cropTypes,demand,setDemand,cycles,setCycl
     const newCycle={
       id:`cycle_${Date.now()}`,
       name:`Cycle ${cycles.length+1}`,status:"draft",
+      activationDate:newStart,  // auto-set activation date to start date
       weeks:[0,1,2].map(i=>({
         weekIndex:i,label:`Week ${i+1}`,
         startDate:addD(newStart,i*7),endDate:addD(newStart,i*7+6),
@@ -545,14 +801,20 @@ function DemandPage({ghList,activities,cropTypes,demand,setDemand,cycles,setCycl
   const activeCycle=cycles.find(c=>c.id===activeCycleId)||cycles[0]||null;
   const activeWeek=activeCycle?.weeks?.[activeWeekIndex]||null;
 
-  // Get/set ghCrops for active week
+  // Cycle activation lock check
+  const canActivateCycle=(cy)=>{
+    if(!cy.activationDate)return true;
+    const now=new Date();
+    const actDate=new Date(cy.activationDate);
+    return now>=actDate;
+  };
+
   const getGhCrops=(ghName)=>activeWeek?.ghCrops?.[ghName]||[];
   const setGhCrops=(ghName,crops)=>{
     const updated=cycles.map(cy=>cy.id===activeCycle.id?{...cy,weeks:cy.weeks.map((w,wi)=>wi===activeWeekIndex?{...w,ghCrops:{...w.ghCrops,[ghName]:crops}}:w)}:cy);
     setCycles(updated);setDemand(prev=>({...prev,__cycles:updated}));
   };
 
-  // Get/set demand for active week: {ghName: {cropType: {activity: hours}}}
   const getWeekDemand=()=>activeWeek?.demand||{};
   const setWeekDemandVal=(ghName,cropType,activity,val)=>{
     const updated=cycles.map(cy=>cy.id===activeCycle.id?{...cy,weeks:cy.weeks.map((w,wi)=>{
@@ -564,7 +826,6 @@ function DemandPage({ghList,activities,cropTypes,demand,setDemand,cycles,setCycl
       return{...w,demand:d};
     })}:cy);
     setCycles(updated);
-    // Also flatten into main demand for optimiser
     const flatDemand={};
     updated.find(cy=>cy.id===activeCycleId)?.weeks[activeWeekIndex]?.demand&&Object.entries(updated.find(cy=>cy.id===activeCycleId).weeks[activeWeekIndex].demand).forEach(([gh,cropRows])=>{
       flatDemand[gh]={};
@@ -578,10 +839,17 @@ function DemandPage({ghList,activities,cropTypes,demand,setDemand,cycles,setCycl
   const weekTotal=Object.values(wd).reduce((sum,cropRows)=>sum+Object.values(cropRows).reduce((s2,acts)=>s2+Object.values(acts).reduce((s3,h)=>s3+(parseInt(h)||0),0),0),0);
 
   const handleGenerate=()=>{
-    // Flatten demand for optimiser
     const flat={};
-    Object.entries(wd).forEach(([gh,cropRows])=>{flat[gh]={};Object.entries(cropRows).forEach(([,acts])=>Object.entries(acts).forEach(([act,hrs])=>{flat[gh][act]=(flat[gh][act]||0)+(parseInt(hrs)||0);}));});
-    generateSchedule(flat);
+    const cropDemand={};
+    Object.entries(wd).forEach(([gh,cropRows])=>{
+      flat[gh]={};
+      cropDemand[gh]={};
+      Object.entries(cropRows).forEach(([ct,acts])=>{
+        cropDemand[gh][ct]=acts;
+        Object.entries(acts).forEach(([act,hrs])=>{flat[gh][act]=(flat[gh][act]||0)+(parseInt(hrs)||0);});
+      });
+    });
+    generateSchedule(flat,cropDemand);
   };
 
   if(!cycles.length||!activeCycle)return(
@@ -589,10 +857,11 @@ function DemandPage({ghList,activities,cropTypes,demand,setDemand,cycles,setCycl
       <h2 style={{color:C.navy,marginBottom:"16px"}}>📋 Demand Planning</h2>
       <div style={card}>
         <h4 style={{color:C.navy,marginBottom:"16px"}}>Create Your First Planning Cycle</h4>
-        <p style={{color:C.textMid,fontSize:"13px",marginBottom:"16px"}}>A planning cycle covers 3 weeks. Enter the cycle name and start date — the system will calculate all 3 weeks automatically.</p>
+        <p style={{color:C.textMid,fontSize:"13px",marginBottom:"16px"}}>A planning cycle covers 3 weeks. Enter the cycle name and start date.</p>
         <div style={{display:"flex",gap:"12px",flexWrap:"wrap",alignItems:"flex-end"}}>
           <div><label style={{display:"block",fontSize:"13px",color:C.textMid,marginBottom:"4px"}}>Cycle Name:</label><input value={newCycleName} onChange={e=>setNewCycleName(e.target.value)} style={{...inp,width:"160px"}} placeholder="Cycle 1"/></div>
-          <div><label style={{display:"block",fontSize:"13px",color:C.textMid,marginBottom:"4px"}}>Cycle Start Date:</label><input type="date" value={newCycleStart} onChange={e=>setNewCycleStart(e.target.value)} style={{...inp}}/></div>
+          <div><label style={{display:"block",fontSize:"13px",color:C.textMid,marginBottom:"4px"}}>Start Date:</label><input type="date" value={newCycleStart} onChange={e=>setNewCycleStart(e.target.value)} style={inp}/></div>
+          <div><label style={{display:"block",fontSize:"13px",color:C.textMid,marginBottom:"4px"}}>Activation Date (optional lock):</label><input type="date" value={newCycleActivationDate} onChange={e=>setNewCycleActivationDate(e.target.value)} style={inp}/></div>
           <button onClick={createCycle} style={{...btn(false,C.green),padding:"9px 20px"}}>🚀 Create Cycle</button>
         </div>
       </div>
@@ -607,15 +876,26 @@ function DemandPage({ghList,activities,cropTypes,demand,setDemand,cycles,setCycl
       <div style={{...card,padding:"12px",marginBottom:"12px"}}>
         <div style={{display:"flex",alignItems:"center",gap:"8px",flexWrap:"wrap"}}>
           <span style={{fontWeight:"700",color:C.navy,fontSize:"13px",marginRight:"4px"}}>Cycle:</span>
-          {cycles.map((cy,ci)=>(
-            <button key={cy.id} onClick={()=>{setActiveCycleId(cy.id);setActiveWeekIndex(0);}}
-              style={{padding:"6px 14px",background:cy.id===activeCycleId?C.navy:"white",color:cy.id===activeCycleId?"white":C.textMid,border:`2px solid ${cy.id===activeCycleId?C.navy:C.border}`,borderRadius:"6px",cursor:"pointer",fontSize:"12px",fontWeight:"600"}}>
-              {cy.name}
-              <span style={{marginLeft:"6px",fontSize:"10px",opacity:0.7}}>[{cy.status}]</span>
-            </button>
-          ))}
-          <button onClick={()=>{const nm=window.prompt("New cycle name:",`Cycle ${cycles.length+1}`);if(!nm)return;const sd=window.prompt("Start date (YYYY-MM-DD):",addD(activeCycle.weeks[2].endDate,1));if(!sd)return;const nc={id:`cycle_${Date.now()}`,name:nm,status:"draft",weeks:[0,1,2].map(i=>({weekIndex:i,label:`Week ${i+1}`,startDate:addD(sd,i*7),endDate:addD(sd,i*7+6),ghCrops:{},demand:{}}))};const upd=[...cycles,nc];setCycles(upd);setActiveCycleId(nc.id);setActiveWeekIndex(0);setDemand(prev=>({...prev,__cycles:upd}));}} style={{...btn(false,C.teal),fontSize:"12px",padding:"6px 12px"}}>+ New Cycle</button>
+          {cycles.map((cy)=>{
+            const locked=cy.status==="draft"&&cy.activationDate&&!canActivateCycle(cy);
+            return(
+              <button key={cy.id} onClick={()=>{setActiveCycleId(cy.id);setActiveWeekIndex(0);}}
+                style={{padding:"6px 14px",background:cy.id===activeCycleId?C.navy:"white",color:cy.id===activeCycleId?"white":C.textMid,border:`2px solid ${cy.id===activeCycleId?C.navy:C.border}`,borderRadius:"6px",cursor:"pointer",fontSize:"12px",fontWeight:"600"}}>
+                {cy.name}
+                <span style={{marginLeft:"6px",fontSize:"10px",opacity:0.7}}>[{cy.status}]</span>
+                {locked&&<span style={{marginLeft:"4px",fontSize:"10px",color:C.gold}}>🔒</span>}
+              </button>
+            );
+          })}
+          <button onClick={()=>{const nm=window.prompt("New cycle name:",`Cycle ${cycles.length+1}`);if(!nm)return;const sd=window.prompt("Start date (YYYY-MM-DD):",addD(activeCycle.weeks[2].endDate,1));if(!sd)return;const ad=window.prompt("Activation date lock (YYYY-MM-DD, optional):",addD(activeCycle.weeks[2].endDate,1));const nc={id:`cycle_${Date.now()}`,name:nm,status:"draft",activationDate:ad||null,weeks:[0,1,2].map(i=>({weekIndex:i,label:`Week ${i+1}`,startDate:addD(sd,i*7),endDate:addD(sd,i*7+6),ghCrops:{},demand:{}}))};const upd=[...cycles,nc];setCycles(upd);setActiveCycleId(nc.id);setActiveWeekIndex(0);setDemand(prev=>({...prev,__cycles:upd}));}} style={{...btn(false,C.teal),fontSize:"12px",padding:"6px 12px"}}>+ New Cycle</button>
           <button onClick={carryForward} style={{...btn(false,C.blue),fontSize:"12px",padding:"6px 12px"}}>⏩ Carry Forward</button>
+
+          {/* Activation lock info */}
+          {activeCycle?.activationDate&&(
+            <span style={{fontSize:"11px",color:canActivateCycle(activeCycle)?C.green:C.gold,marginLeft:"8px"}}>
+              {canActivateCycle(activeCycle)?"✅ Can activate":"🔒 Activates: "+new Date(activeCycle.activationDate).toLocaleDateString("en-AU")}
+            </span>
+          )}
         </div>
       </div>
 
@@ -642,30 +922,24 @@ function DemandPage({ghList,activities,cropTypes,demand,setDemand,cycles,setCycl
           </div>
         </div>
 
-        {/* Per-GH crop selection + demand rows */}
         <div style={{overflowX:"auto"}}>
-          {ghList.map((gh,gi)=>{
+          {ghList.map((gh)=>{
             const ghName=gh.name;
             const selectedCrops=getGhCrops(ghName);
             const ghDemand=wd[ghName]||{};
             return(
               <div key={ghName} style={{marginBottom:"16px",border:`1px solid ${C.border}`,borderRadius:"8px",overflow:"hidden"}}>
-                {/* GH header row */}
                 <div style={{background:C.navy,padding:"8px 12px",display:"flex",alignItems:"center",gap:"12px",flexWrap:"wrap"}}>
                   <span style={{color:"white",fontWeight:"700",fontSize:"13px",minWidth:"120px"}}>{ghName}</span>
                   <span style={{color:"rgba(255,255,255,0.7)",fontSize:"11px"}}>Select crops for this week:</span>
                   <div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>
                     {cropTypes.map(ct=>(
                       <label key={ct} style={{display:"flex",alignItems:"center",gap:"4px",background:selectedCrops.includes(ct)?"rgba(46,204,113,0.3)":"rgba(255,255,255,0.1)",padding:"3px 8px",borderRadius:"4px",cursor:"pointer",border:`1px solid ${selectedCrops.includes(ct)?"#2ecc71":"rgba(255,255,255,0.2)"}`,fontSize:"11px",color:"white"}}>
-                        <input type="checkbox" checked={selectedCrops.includes(ct)}
-                          onChange={e=>{const crops=e.target.checked?[...selectedCrops,ct]:selectedCrops.filter(c=>c!==ct);setGhCrops(ghName,crops);}}
-                          style={{accentColor:C.green}}/>{ct}
+                        <input type="checkbox" checked={selectedCrops.includes(ct)} onChange={e=>{const crops=e.target.checked?[...selectedCrops,ct]:selectedCrops.filter(c=>c!==ct);setGhCrops(ghName,crops);}} style={{accentColor:C.green}}/>{ct}
                       </label>
                     ))}
                   </div>
                 </div>
-
-                {/* Crop demand rows */}
                 {selectedCrops.length===0?(
                   <div style={{padding:"10px 14px",background:"#fafafa",fontSize:"12px",color:C.textLight,fontStyle:"italic"}}>Select one or more crop types above to enter demand hours.</div>
                 ):(
@@ -696,7 +970,6 @@ function DemandPage({ghList,activities,cropTypes,demand,setDemand,cycles,setCycl
                             </tr>
                           );
                         })}
-                        {/* GH subtotal */}
                         <tr style={{background:"#eaf4fb",borderTop:`2px solid ${C.border}`}}>
                           <td style={{padding:"6px 12px",fontWeight:"700",color:C.navy,fontSize:"12px"}}>GH Total</td>
                           {activities.map(act=>{const colTotal=selectedCrops.reduce((s,ct)=>s+(parseInt(ghDemand[ct]?.[act])||0),0);return <td key={act} style={{padding:"6px 3px",textAlign:"center",fontSize:"12px",fontWeight:colTotal>0?"700":"400",color:colTotal>0?C.navy:C.textLight}}>{colTotal||""}</td>;})}
@@ -713,7 +986,7 @@ function DemandPage({ghList,activities,cropTypes,demand,setDemand,cycles,setCycl
 
         <div style={{marginTop:"16px",display:"flex",gap:"10px",alignItems:"center",flexWrap:"wrap"}}>
           <button onClick={handleGenerate} disabled={generating} style={{...btn(false,C.green),padding:"11px 26px",fontSize:"14px",opacity:generating?0.7:1}}>{generating?"⏳ Optimising...":"🚀 Generate Optimised Plan"}</button>
-          <button onClick={()=>{if(window.confirm("Clear all demand for this week?")){{const updated=cycles.map(cy=>cy.id===activeCycleId?{...cy,weeks:cy.weeks.map((w,wi)=>wi===activeWeekIndex?{...w,demand:{}}:w)}:cy);setCycles(updated);setDemand(prev=>({...prev,__cycles:updated}));}}}}} style={btn(false,C.red)}>🗑️ Clear This Week</button>
+          <button onClick={()=>{if(window.confirm("Clear all demand for this week?")){const updated=cycles.map(cy=>cy.id===activeCycleId?{...cy,weeks:cy.weeks.map((w,wi)=>wi===activeWeekIndex?{...w,demand:{}}:w)}:cy);setCycles(updated);setDemand(prev=>({...prev,__cycles:updated}));}}} style={btn(false,C.red)}>🗑️ Clear This Week</button>
         </div>
       </div>
     </div>
@@ -721,16 +994,42 @@ function DemandPage({ghList,activities,cropTypes,demand,setDemand,cycles,setCycl
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// OVERTIME PAGE — full tab with entries, GM override, cost estimation
+// OVERTIME PAGE — with OT eligibility warning + overlap check + 30hr cap
 // ═══════════════════════════════════════════════════════════════════════════════
 function OvertimePage({staff,ghList,activities,schedule,absences,overtimeEntries,setOvertimeEntries,role,activeWeek,activeWeekIndex,generating,setGenerating,btn,inp,card,C,API,fmtDate}){
   const [defaultRate,setDefaultRate]=useState("");
-  const [editingEntry,setEditingEntry]=useState(null);
   const [manualEntry,setManualEntry]=useState({staffId:"",greenhouse:"",activity:"",day:"Monday",hours:"",ratePerHour:""});
   const [showAddManual,setShowAddManual]=useState(false);
+  const [eligibilityWarning,setEligibilityWarning]=useState(null);
 
   const ghNames=ghList.map(g=>g.name);
-  const ALL_DAYS=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+  const ALL_DAYS_LOCAL=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+
+  // Check OT hours used this week per staff (regular + OT combined tracking)
+  const getStaffOTHoursUsed=(staffId)=>overtimeEntries.filter(e=>e.staffId===staffId).reduce((s,e)=>s+(parseFloat(e.hours)||0),0);
+
+  // Check for time overlap — OT on a workday must not overlap existing schedule
+  const checkOverlap=(staffId,day)=>{
+    if(!schedule||!schedule[day])return false;
+    return schedule[day].some(a=>a.staffId===staffId&&!a.unassigned);
+  };
+
+  // Check 3-way eligibility for manual OT entry
+  const checkManualEligibility=async(staffId,greenhouse,activity)=>{
+    if(!staffId||!greenhouse||!activity){setEligibilityWarning(null);return;}
+    const s=staff.find(x=>x.id===staffId);
+    if(!s){setEligibilityWarning(null);return;}
+    const gh=ghList.find(g=>g.name===greenhouse);
+    const ghCrops=gh?.cropTypes||[];
+    try{
+      const res=await axios.post(`${API}/overtime/check-eligibility`,{staff,staffId,activity,greenhouse,ghCrops});
+      if(!res.data.eligible){
+        setEligibilityWarning({staffId,reason:res.data.reason});
+      }else{
+        setEligibilityWarning(null);
+      }
+    }catch(e){setEligibilityWarning(null);}
+  };
 
   const calcOT=async()=>{
     setGenerating(true);
@@ -755,20 +1054,42 @@ function OvertimePage({staff,ghList,activities,schedule,absences,overtimeEntries
     return updated;
   }));
 
-  const addManual=()=>{
+  const addManual=async()=>{
     if(!manualEntry.staffId||!manualEntry.greenhouse||!manualEntry.activity)return alert("Please fill in staff, greenhouse and activity.");
     const s=staff.find(x=>x.id===manualEntry.staffId);
+
+    // Check 30hr OT cap
+    const otUsed=getStaffOTHoursUsed(manualEntry.staffId);
+    const otLimit=s?.overtimeLimit??30;
+    const hoursToAdd=parseFloat(manualEntry.hours)||0;
+    if(otUsed+hoursToAdd>otLimit){
+      alert(`⚠️ OT Cap Warning: ${s?.name} has already used ${otUsed}h of OT this week (cap: ${otLimit}h). This entry would exceed the cap by ${(otUsed+hoursToAdd-otLimit).toFixed(1)}h.`);
+      if(!window.confirm("Add anyway?"))return;
+    }
+
+    // Check overlap on workday
+    const isWeekend=["Saturday","Sunday"].includes(manualEntry.day);
+    if(!isWeekend&&checkOverlap(manualEntry.staffId,manualEntry.day)){
+      if(!window.confirm(`⚠️ ${s?.name} already has regular schedule assignments on ${manualEntry.day}. Confirm this OT does not overlap their regular hours?`))return;
+    }
+
+    // Check eligibility — warn but allow override
+    if(eligibilityWarning&&eligibilityWarning.staffId===manualEntry.staffId){
+      if(!window.confirm(`⚠️ Eligibility Warning:\n\n${eligibilityWarning.reason}\n\nClick OK to assign anyway (GM override).`))return;
+    }
+
     const hrs=parseFloat(manualEntry.hours)||0;
     const rate=parseFloat(manualEntry.ratePerHour)||null;
     const newEntry={
       id:`ot_${Date.now()}`,staffId:manualEntry.staffId,staffName:s?.name||manualEntry.staffId,
       greenhouse:manualEntry.greenhouse,activity:manualEntry.activity,day:manualEntry.day,
       hours:hrs,ratePerHour:rate,estimatedCost:rate&&hrs?rate*hrs:null,
-      source:"manual",createdAt:new Date().toISOString()
+      source:"manual",createdAt:new Date().toISOString(),
+      gmOverride:!!(eligibilityWarning&&eligibilityWarning.staffId===manualEntry.staffId)
     };
     setOvertimeEntries([...overtimeEntries,newEntry]);
     setManualEntry({staffId:"",greenhouse:"",activity:"",day:"Monday",hours:"",ratePerHour:""});
-    setShowAddManual(false);
+    setShowAddManual(false);setEligibilityWarning(null);
   };
 
   const totalCost=overtimeEntries.reduce((s,e)=>s+(e.estimatedCost||0),0);
@@ -779,70 +1100,60 @@ function OvertimePage({staff,ghList,activities,schedule,absences,overtimeEntries
       <h2 style={{color:C.navy,marginBottom:"4px"}}>⏱️ Overtime</h2>
       {activeWeek&&<p style={{color:C.textMid,fontSize:"13px",marginBottom:"16px"}}>Week {activeWeekIndex+1}: {fmtDate(activeWeek.startDate)}</p>}
 
-      {/* Summary bar */}
       {overtimeEntries.length>0&&(
         <div style={{...card,background:"#fff8ee",padding:"14px",marginBottom:"14px",borderLeft:`4px solid ${C.gold}`}}>
           <div style={{display:"flex",gap:"24px",flexWrap:"wrap",fontSize:"13px"}}>
             <span>⏱️ <strong>Total OT Hours:</strong> {totalOTHours.toFixed(1)}h</span>
             <span>👥 <strong>Staff on OT:</strong> {new Set(overtimeEntries.map(e=>e.staffId)).size}</span>
             {totalCost>0&&<span>💰 <strong>Estimated Cost:</strong> ${totalCost.toFixed(2)}</span>}
-            <span style={{color:C.textLight,fontSize:"11px"}}>System entries auto-calculated | Manual entries override system</span>
           </div>
         </div>
       )}
 
-      {/* Controls */}
       <div style={card}>
         <div style={{display:"flex",gap:"12px",flexWrap:"wrap",alignItems:"flex-end",marginBottom:"16px"}}>
           <div>
             <label style={{display:"block",fontSize:"12px",color:C.textMid,marginBottom:"4px"}}>Default $/hr rate (optional):</label>
             <input type="number" min="0" value={defaultRate} onChange={e=>setDefaultRate(e.target.value)} style={{...inp,width:"120px"}} placeholder="e.g. 45.00"/>
           </div>
-          {schedule?(
-            <button onClick={calcOT} disabled={generating} style={{...btn(false,C.orange),opacity:generating?0.7:1}}>{generating?"⏳ Calculating...":"⚡ Calculate System OT"}</button>
-          ):(
-            <span style={{color:C.textLight,fontSize:"13px",padding:"8px"}}>Generate a schedule first to calculate overtime.</span>
-          )}
+          {schedule?<button onClick={calcOT} disabled={generating} style={{...btn(false,C.orange),opacity:generating?0.7:1}}>{generating?"⏳ Calculating...":"⚡ Calculate System OT"}</button>:<span style={{color:C.textLight,fontSize:"13px",padding:"8px"}}>Generate a schedule first.</span>}
           {role==="gm"&&<button onClick={()=>setShowAddManual(!showAddManual)} style={btn(false,C.purple)}>+ Add Manual OT Entry</button>}
           {overtimeEntries.length>0&&role==="gm"&&<button onClick={()=>{if(window.confirm("Clear all OT entries?"))setOvertimeEntries([]);}} style={btn(false,C.red)}>🗑️ Clear All</button>}
         </div>
 
-        {/* Overtime priority info */}
         <div style={{padding:"12px",background:C.light,borderRadius:"8px",fontSize:"12px",color:C.textMid,marginBottom:"16px"}}>
-          <strong>Priority rules:</strong>
-          <ol style={{margin:"6px 0 0 0",paddingLeft:"18px",lineHeight:"1.7"}}>
-            <li>Under-utilised staff (below normal capacity) — matching activity, GH and crop type required</li>
-            <li>Highest versatility staff — if all staff fully utilised</li>
-            {role==="gm"&&<li style={{color:C.navy,fontWeight:"600"}}>GM can delete any system entry and add manual entries — manual entries take priority</li>}
-          </ol>
+          <strong>OT rules:</strong> 30-hour OT cap per staff (separate from regular hours). OT on workdays must not overlap regular schedule. Under-utilised staff offered OT first → then highest versatility. 3-way eligibility (activity + GH + crop type) always checked — warnings shown for GM overrides.
         </div>
 
-        {/* Manual add form */}
         {showAddManual&&role==="gm"&&(
           <div style={{background:"#f8f4ff",border:`1px solid ${C.purple}`,borderRadius:"8px",padding:"14px",marginBottom:"16px"}}>
             <h4 style={{color:C.purple,margin:"0 0 12px 0",fontSize:"14px"}}>Add Manual OT Entry (GM Override)</h4>
+            {eligibilityWarning&&(
+              <div style={{background:"#fff5f5",border:`1px solid ${C.red}`,borderRadius:"6px",padding:"10px",marginBottom:"12px",fontSize:"12px",color:C.red}}>
+                ⚠️ <strong>Eligibility Warning:</strong> {eligibilityWarning.reason}<br/>
+                <span style={{color:C.textMid}}>You can still save — GM override will be recorded.</span>
+              </div>
+            )}
             <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"10px",marginBottom:"10px"}}>
               <div><label style={{fontSize:"12px",color:C.textMid,display:"block",marginBottom:"3px"}}>Staff:</label>
-                <select value={manualEntry.staffId} onChange={e=>setManualEntry(p=>({...p,staffId:e.target.value}))} style={{...inp,width:"100%"}}>
+                <select value={manualEntry.staffId} onChange={e=>{setManualEntry(p=>({...p,staffId:e.target.value}));checkManualEligibility(e.target.value,manualEntry.greenhouse,manualEntry.activity);}} style={{...inp,width:"100%"}}>
                   <option value="">— Select —</option>
-                  {staff.map(s=><option key={s.id} value={s.id}>{s.name} ({s.id})</option>)}
+                  {staff.map(s=>{const otUsed=getStaffOTHoursUsed(s.id);const cap=s.overtimeLimit??30;return <option key={s.id} value={s.id}>{s.name} ({s.id}) — OT: {otUsed.toFixed(1)}/{cap}h</option>;})}
                 </select>
               </div>
               <div><label style={{fontSize:"12px",color:C.textMid,display:"block",marginBottom:"3px"}}>Greenhouse:</label>
-                <select value={manualEntry.greenhouse} onChange={e=>setManualEntry(p=>({...p,greenhouse:e.target.value}))} style={{...inp,width:"100%"}}>
-                  <option value="">— Select —</option>
-                  {ghNames.map(g=><option key={g} value={g}>{g}</option>)}
+                <select value={manualEntry.greenhouse} onChange={e=>{setManualEntry(p=>({...p,greenhouse:e.target.value}));checkManualEligibility(manualEntry.staffId,e.target.value,manualEntry.activity);}} style={{...inp,width:"100%"}}>
+                  <option value="">— Select —</option>{ghNames.map(g=><option key={g} value={g}>{g}</option>)}
                 </select>
               </div>
               <div><label style={{fontSize:"12px",color:C.textMid,display:"block",marginBottom:"3px"}}>Activity:</label>
-                <select value={manualEntry.activity} onChange={e=>setManualEntry(p=>({...p,activity:e.target.value}))} style={{...inp,width:"100%"}}>
-                  <option value="">— Select —</option>
-                  {activities.map(a=><option key={a} value={a}>{a}</option>)}
+                <select value={manualEntry.activity} onChange={e=>{setManualEntry(p=>({...p,activity:e.target.value}));checkManualEligibility(manualEntry.staffId,manualEntry.greenhouse,e.target.value);}} style={{...inp,width:"100%"}}>
+                  <option value="">— Select —</option>{activities.map(a=><option key={a} value={a}>{a}</option>)}
                 </select>
               </div>
               <div><label style={{fontSize:"12px",color:C.textMid,display:"block",marginBottom:"3px"}}>Day:</label>
                 <select value={manualEntry.day} onChange={e=>setManualEntry(p=>({...p,day:e.target.value}))} style={{...inp,width:"100%"}}>
-                  {ALL_DAYS.map(d=><option key={d} value={d}>{d}</option>)}
+                  {ALL_DAYS_LOCAL.map(d=>{const hasSchedule=checkOverlap(manualEntry.staffId,d);return <option key={d} value={d}>{d}{hasSchedule?" ⚠️ has schedule":""}</option>;})}
                 </select>
               </div>
               <div><label style={{fontSize:"12px",color:C.textMid,display:"block",marginBottom:"3px"}}>Hours:</label>
@@ -854,12 +1165,11 @@ function OvertimePage({staff,ghList,activities,schedule,absences,overtimeEntries
             </div>
             <div style={{display:"flex",gap:"8px"}}>
               <button onClick={addManual} style={btn(false,C.purple)}>✓ Add Entry</button>
-              <button onClick={()=>setShowAddManual(false)} style={btn(false,C.textLight)}>Cancel</button>
+              <button onClick={()=>{setShowAddManual(false);setEligibilityWarning(null);}} style={btn(false,C.textLight)}>Cancel</button>
             </div>
           </div>
         )}
 
-        {/* OT entries table */}
         {overtimeEntries.length>0?(
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:"13px"}}>
             <thead><tr>
@@ -876,16 +1186,12 @@ function OvertimePage({staff,ghList,activities,schedule,absences,overtimeEntries
             <tbody>
               {overtimeEntries.map((e,i)=>(
                 <tr key={e.id} style={{background:e.source==="manual"?"#fdf4ff":i%2===0?C.light:C.white}}>
-                  <td style={{padding:"8px"}}><strong>{e.staffName}</strong><br/><span style={{fontFamily:"monospace",fontSize:"11px",color:C.textLight}}>{e.staffId}</span></td>
+                  <td style={{padding:"8px"}}><strong>{e.staffName}</strong><br/><span style={{fontFamily:"monospace",fontSize:"11px",color:C.textLight}}>{e.staffId}</span>{e.gmOverride&&<span style={{display:"block",fontSize:"10px",color:C.orange}}>⚠️ GM Override</span>}</td>
                   <td style={{padding:"8px"}}>{e.day}</td>
                   <td style={{padding:"8px"}}>{e.greenhouse}</td>
                   <td style={{padding:"8px"}}>{e.activity}</td>
-                  <td style={{padding:"8px",textAlign:"center"}}>
-                    {role==="gm"?<input type="number" min="0" max="24" value={e.hours} onChange={ev=>updateEntry(e.id,{hours:parseFloat(ev.target.value)||0})} style={{width:"55px",padding:"3px",border:`1px solid ${C.border}`,borderRadius:"4px",textAlign:"center",fontSize:"12px"}}/>:<span>{e.hours}h</span>}
-                  </td>
-                  <td style={{padding:"8px",textAlign:"center"}}>
-                    {role==="gm"?<input type="number" min="0" value={e.ratePerHour||""} onChange={ev=>updateEntry(e.id,{ratePerHour:parseFloat(ev.target.value)||null})} style={{width:"65px",padding:"3px",border:`1px solid ${C.border}`,borderRadius:"4px",textAlign:"center",fontSize:"12px"}} placeholder="—"/>:<span>{e.ratePerHour?`$${e.ratePerHour}`:"—"}</span>}
-                  </td>
+                  <td style={{padding:"8px",textAlign:"center"}}>{role==="gm"?<input type="number" min="0" max="24" value={e.hours} onChange={ev=>updateEntry(e.id,{hours:parseFloat(ev.target.value)||0})} style={{width:"55px",padding:"3px",border:`1px solid ${C.border}`,borderRadius:"4px",textAlign:"center",fontSize:"12px"}}/>:<span>{e.hours}h</span>}</td>
+                  <td style={{padding:"8px",textAlign:"center"}}>{role==="gm"?<input type="number" min="0" value={e.ratePerHour||""} onChange={ev=>updateEntry(e.id,{ratePerHour:parseFloat(ev.target.value)||null})} style={{width:"65px",padding:"3px",border:`1px solid ${C.border}`,borderRadius:"4px",textAlign:"center",fontSize:"12px"}} placeholder="—"/>:<span>{e.ratePerHour?`$${e.ratePerHour}`:"—"}</span>}</td>
                   <td style={{padding:"8px",textAlign:"center",fontWeight:"600",color:e.estimatedCost?C.navy:C.textLight}}>{e.estimatedCost?`$${e.estimatedCost.toFixed(2)}`:"—"}</td>
                   <td style={{padding:"8px",textAlign:"center"}}><span style={{background:e.source==="manual"?"#f0e6ff":"#e8f4fd",color:e.source==="manual"?C.purple:C.blue,padding:"2px 8px",borderRadius:"10px",fontSize:"11px",fontWeight:"600"}}>{e.source==="manual"?"Manual ★":"System"}</span></td>
                   {role==="gm"&&<td style={{padding:"8px",textAlign:"center"}}><button onClick={()=>deleteEntry(e.id)} style={{...btn(false,C.red),padding:"4px 8px",fontSize:"11px"}}>🗑️</button></td>}
@@ -894,7 +1200,7 @@ function OvertimePage({staff,ghList,activities,schedule,absences,overtimeEntries
             </tbody>
           </table>
         ):(
-          <p style={{color:C.textLight,fontSize:"13px",textAlign:"center",padding:"20px"}}>No overtime entries yet. Click "Calculate System OT" to auto-generate, or add manual entries.</p>
+          <p style={{color:C.textLight,fontSize:"13px",textAlign:"center",padding:"20px"}}>No overtime entries yet.</p>
         )}
       </div>
     </div>
@@ -902,27 +1208,39 @@ function OvertimePage({staff,ghList,activities,schedule,absences,overtimeEntries
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// QUARANTINE PANEL — Type A (GH lock) + Type B (individual lock), concurrent
+// QUARANTINE PANEL — with extend + expired history
 // ═══════════════════════════════════════════════════════════════════════════════
-function QuarantinePanel({staff,ghList,quarantine,setQuarantine,schedule,btn,inp,C,API,adelaideTime,fmtISOReadable,role}){
-  // Type A state
+function QuarantinePanel({staff,ghList,quarantine,setQuarantine,quarantineHistory,setQuarantineHistory,schedule,btn,inp,C,API,adelaideTime,fmtISOReadable,role}){
   const [typeA_gh,setTypeA_gh]=useState("");
   const [typeA_days,setTypeA_days]=useState(7);
   const [typeA_reason,setTypeA_reason]=useState("");
-  // Type B state
   const [typeB_staff,setTypeB_staff]=useState([]);
   const [typeB_gh,setTypeB_gh]=useState("");
   const [typeB_days,setTypeB_days]=useState(7);
   const [typeB_reason,setTypeB_reason]=useState("");
+  const [showHistory,setShowHistory]=useState(false);
+  const [extendId,setExtendId]=useState(null);
+  const [extendDays,setExtendDays]=useState(7);
 
   const ghNames=ghList.map(g=>g.name);
 
-  // Auto-detect staff in a GH from current schedule
   const getStaffInGH=(ghName)=>{
     if(!schedule||!ghName)return[];
     const ids=new Set();
     Object.values(schedule).forEach(assignments=>assignments.forEach(a=>{if(a.greenhouse===ghName&&!a.unassigned)ids.add(a.staffId);}));
     return[...ids];
+  };
+
+  // Calculate days remaining for an order
+  const getDaysRemaining=(ev)=>{
+    try{
+      const start=new Date(ev.startDate);
+      const totalDays=(ev.daysLocked||7)+(ev.extensionDays||0);
+      const end=new Date(start.getTime()+totalDays*24*60*60*1000);
+      const now=new Date();
+      const diff=Math.ceil((end-now)/(1000*60*60*24));
+      return Math.max(0,diff);
+    }catch{return 0;}
   };
 
   const createTypeA=async()=>{
@@ -932,15 +1250,14 @@ function QuarantinePanel({staff,ghList,quarantine,setQuarantine,schedule,btn,inp
     try{
       const res=await axios.post(`${API}/quarantine`,{
         greenhouseId:typeA_gh,staffIds:autoStaff,
-        allowedGreenhouses:[typeA_gh],
-        daysLocked:typeA_days,reason:typeA_reason,
-        startDate:new Date().toISOString(),
+        allowedGreenhouses:[typeA_gh],daysLocked:typeA_days,
+        reason:typeA_reason,startDate:new Date().toISOString(),
         quarantineType:"A",createdBy:"GM"
       });
       if(res.data.event){
         setQuarantine([...quarantine,res.data.event]);
         setTypeA_gh("");setTypeA_reason("");setTypeA_days(7);
-        alert(`Type A Quarantine created for ${typeA_gh}.\n${autoStaff.length} staff automatically locked.\nNo other staff can enter this greenhouse for ${typeA_days} days.`);
+        alert(`Type A Quarantine created for ${typeA_gh}.\n${autoStaff.length} staff auto-locked for ${typeA_days} days.`);
       }
     }catch(e){alert("Error: "+e.message);}
   };
@@ -951,64 +1268,69 @@ function QuarantinePanel({staff,ghList,quarantine,setQuarantine,schedule,btn,inp
     try{
       const res=await axios.post(`${API}/quarantine`,{
         greenhouseId:typeB_gh,staffIds:typeB_staff,
-        allowedGreenhouses:[typeB_gh],
-        daysLocked:typeB_days,reason:typeB_reason,
-        startDate:new Date().toISOString(),
+        allowedGreenhouses:[typeB_gh],daysLocked:typeB_days,
+        reason:typeB_reason,startDate:new Date().toISOString(),
         quarantineType:"B",createdBy:"GM"
       });
       if(res.data.event){
         setQuarantine([...quarantine,res.data.event]);
         setTypeB_staff([]);setTypeB_gh("");setTypeB_reason("");setTypeB_days(7);
-        alert(`Type B Quarantine created for ${typeB_staff.length} staff member(s), restricted to ${typeB_gh}.`);
+        alert(`Type B Quarantine created. ${typeB_staff.length} staff restricted to ${typeB_gh} for ${typeB_days} days.`);
       }
     }catch(e){alert("Error: "+e.message);}
   };
 
   const removeEvent=async(id)=>{
-    if(!window.confirm("Remove this quarantine event?"))return;
-    try{await axios.delete(`${API}/quarantine/${id}`);setQuarantine(quarantine.filter(e=>e.id!==id));}
-    catch(e){alert("Error: "+e.message);}
+    if(!window.confirm("Remove this quarantine event early?"))return;
+    try{
+      await axios.delete(`${API}/quarantine/${id}`);
+      const removed=quarantine.find(e=>e.id===id);
+      if(removed)setQuarantineHistory([{...removed,closedEarly:true,closedAt:new Date().toISOString()},...quarantineHistory]);
+      setQuarantine(quarantine.filter(e=>e.id!==id));
+    }catch(e){alert("Error: "+e.message);}
+  };
+
+  const extendEvent=async(id)=>{
+    try{
+      await axios.post(`${API}/quarantine/${id}/extend`,{additionalDays:extendDays});
+      setQuarantine(quarantine.map(e=>e.id===id?{...e,extensionDays:(e.extensionDays||0)+extendDays,lastExtendedAt:new Date().toISOString()}:e));
+      setExtendId(null);setExtendDays(7);
+      alert(`Quarantine extended by ${extendDays} days.`);
+    }catch(e){alert("Error: "+e.message);}
   };
 
   const autoPreview=getStaffInGH(typeA_gh);
 
+  // Check for redundant (A+B same GH same staff)
+  const checkRedundant=(ev)=>{
+    if(ev.quarantineType!=="B")return false;
+    return quarantine.some(other=>other.quarantineType==="A"&&other.greenhouseId===ev.greenhouseId&&ev.staffIds.some(sid=>other.staffIds.includes(sid)));
+  };
+
   return(
     <div>
       <p style={{color:C.textMid,fontSize:"13px",marginBottom:"20px"}}>
-        Two independent quarantine types can run concurrently. <strong>Type A</strong> locks a greenhouse — all staff currently there are automatically isolated.
-        <strong> Type B</strong> locks specific individuals to a designated greenhouse.
+        Multiple quarantine orders can run concurrently. Each has its own countdown. Use Extend before expiry to continue — otherwise it expires automatically and moves to history.
       </p>
 
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"20px",marginBottom:"24px"}}>
-
-        {/* TYPE A — Greenhouse quarantine */}
+        {/* TYPE A */}
         <div style={{border:`2px solid ${C.red}`,borderRadius:"10px",padding:"16px",background:"#fff8f8"}}>
           <h4 style={{color:C.red,margin:"0 0 4px 0",fontSize:"14px"}}>🔴 Type A — Greenhouse Quarantine</h4>
-          <p style={{color:C.textMid,fontSize:"12px",marginBottom:"14px"}}>Locks a greenhouse. All staff currently scheduled there are automatically identified and restricted to that GH only. No other staff can enter during quarantine.</p>
-
+          <p style={{color:C.textMid,fontSize:"12px",marginBottom:"14px"}}>Locks a greenhouse. All currently scheduled staff are auto-locked to that GH. No other staff may enter.</p>
           <div style={{marginBottom:"10px"}}>
             <label style={{display:"block",fontSize:"12px",fontWeight:"600",color:C.navy,marginBottom:"4px"}}>Select Greenhouse:</label>
             <select value={typeA_gh} onChange={e=>setTypeA_gh(e.target.value)} style={{...inp,width:"100%"}}>
-              <option value="">— Select greenhouse —</option>
-              {ghNames.map(g=><option key={g} value={g}>{g}</option>)}
+              <option value="">— Select greenhouse —</option>{ghNames.map(g=><option key={g} value={g}>{g}</option>)}
             </select>
           </div>
-
           {typeA_gh&&(
             <div style={{background:autoPreview.length>0?"#fff3cd":"#f8f9fa",border:`1px solid ${autoPreview.length>0?"#ffc107":C.border}`,borderRadius:"6px",padding:"8px",marginBottom:"10px",fontSize:"12px"}}>
-              {autoPreview.length>0?(
-                <span>⚠️ <strong>{autoPreview.length} staff</strong> currently in {typeA_gh} will be auto-locked: {autoPreview.map(id=>staff.find(s=>s.id===id)?.name||id).join(", ")}</span>
-              ):(
-                <span style={{color:C.textLight}}>No staff currently scheduled in {typeA_gh}. Event will still be created — locks the GH for future scheduling.</span>
-              )}
+              {autoPreview.length>0?<span>⚠️ <strong>{autoPreview.length} staff</strong> will be auto-locked: {autoPreview.map(id=>staff.find(s=>s.id===id)?.name||id).join(", ")}</span>:<span style={{color:C.textLight}}>No staff currently scheduled in {typeA_gh}.</span>}
             </div>
           )}
-
           <div style={{display:"flex",gap:"10px",marginBottom:"10px"}}>
-            <div style={{flex:1}}>
-              <label style={{display:"block",fontSize:"12px",fontWeight:"600",color:C.navy,marginBottom:"4px"}}>Lock Duration (days):</label>
-              <input type="number" min="1" max="90" value={typeA_days} onChange={e=>setTypeA_days(parseInt(e.target.value)||7)} style={{...inp,width:"80px"}}/>
-            </div>
+            <div><label style={{display:"block",fontSize:"12px",fontWeight:"600",color:C.navy,marginBottom:"4px"}}>Duration (days):</label><input type="number" min="1" max="90" value={typeA_days} onChange={e=>setTypeA_days(parseInt(e.target.value)||7)} style={{...inp,width:"80px"}}/></div>
           </div>
           <div style={{marginBottom:"12px"}}>
             <label style={{display:"block",fontSize:"12px",fontWeight:"600",color:C.navy,marginBottom:"4px"}}>Reason (optional):</label>
@@ -1018,13 +1340,12 @@ function QuarantinePanel({staff,ghList,quarantine,setQuarantine,schedule,btn,inp
           <p style={{color:C.textLight,fontSize:"11px",marginTop:"8px"}}>Adelaide time: {adelaideTime}</p>
         </div>
 
-        {/* TYPE B — Individual quarantine */}
+        {/* TYPE B */}
         <div style={{border:`2px solid ${C.purple}`,borderRadius:"10px",padding:"16px",background:"#fdf8ff"}}>
           <h4 style={{color:C.purple,margin:"0 0 4px 0",fontSize:"14px"}}>🟣 Type B — Individual Quarantine</h4>
-          <p style={{color:C.textMid,fontSize:"12px",marginBottom:"14px"}}>Manually select specific staff members and restrict them to a designated greenhouse for a set number of days. Runs independently from Type A.</p>
-
+          <p style={{color:C.textMid,fontSize:"12px",marginBottom:"14px"}}>Manually select specific staff and restrict to a designated GH. Runs independently from Type A.</p>
           <div style={{marginBottom:"10px"}}>
-            <label style={{display:"block",fontSize:"12px",fontWeight:"600",color:C.navy,marginBottom:"4px"}}>Select Staff to Quarantine:</label>
+            <label style={{display:"block",fontSize:"12px",fontWeight:"600",color:C.navy,marginBottom:"4px"}}>Select Staff:</label>
             <div style={{maxHeight:"160px",overflowY:"auto",border:`1px solid ${C.border}`,borderRadius:"6px",padding:"6px",background:"white"}}>
               {staff.map(s=>(
                 <label key={s.id} style={{display:"flex",alignItems:"center",gap:"8px",padding:"4px 6px",cursor:"pointer",borderRadius:"4px",background:typeB_staff.includes(s.id)?"#f0e6ff":"transparent"}}>
@@ -1034,21 +1355,16 @@ function QuarantinePanel({staff,ghList,quarantine,setQuarantine,schedule,btn,inp
                 </label>
               ))}
             </div>
-            {typeB_staff.length>0&&<p style={{color:C.purple,fontSize:"12px",marginTop:"4px",fontWeight:"600"}}>{typeB_staff.length} staff selected</p>}
+            {typeB_staff.length>0&&<p style={{color:C.purple,fontSize:"12px",marginTop:"4px",fontWeight:"600"}}>{typeB_staff.length} selected</p>}
           </div>
-
           <div style={{marginBottom:"10px"}}>
             <label style={{display:"block",fontSize:"12px",fontWeight:"600",color:C.navy,marginBottom:"4px"}}>Restrict to Greenhouse:</label>
             <select value={typeB_gh} onChange={e=>setTypeB_gh(e.target.value)} style={{...inp,width:"100%"}}>
-              <option value="">— Select greenhouse —</option>
-              {ghNames.map(g=><option key={g} value={g}>{g}</option>)}
+              <option value="">— Select greenhouse —</option>{ghNames.map(g=><option key={g} value={g}>{g}</option>)}
             </select>
           </div>
           <div style={{display:"flex",gap:"10px",marginBottom:"10px"}}>
-            <div>
-              <label style={{display:"block",fontSize:"12px",fontWeight:"600",color:C.navy,marginBottom:"4px"}}>Lock Duration (days):</label>
-              <input type="number" min="1" max="90" value={typeB_days} onChange={e=>setTypeB_days(parseInt(e.target.value)||7)} style={{...inp,width:"80px"}}/>
-            </div>
+            <div><label style={{display:"block",fontSize:"12px",fontWeight:"600",color:C.navy,marginBottom:"4px"}}>Duration (days):</label><input type="number" min="1" max="90" value={typeB_days} onChange={e=>setTypeB_days(parseInt(e.target.value)||7)} style={{...inp,width:"80px"}}/></div>
           </div>
           <div style={{marginBottom:"12px"}}>
             <label style={{display:"block",fontSize:"12px",fontWeight:"600",color:C.navy,marginBottom:"4px"}}>Reason (optional):</label>
@@ -1060,33 +1376,275 @@ function QuarantinePanel({staff,ghList,quarantine,setQuarantine,schedule,btn,inp
 
       {/* Active events */}
       {quarantine.length>0&&(
-        <div>
-          <h4 style={{color:C.navy,marginBottom:"12px"}}>Active Quarantine Events ({quarantine.length})</h4>
+        <div style={{marginBottom:"20px"}}>
+          <h4 style={{color:C.navy,marginBottom:"12px"}}>Active Quarantine Orders ({quarantine.length})</h4>
           {quarantine.map(ev=>{
             const isTypeA=ev.quarantineType==="A"||!ev.quarantineType;
             const color=isTypeA?C.red:C.purple;
             const staffNames=ev.staffIds?.map(id=>staff.find(s=>s.id===id)?.name||id)||[];
+            const daysLeft=getDaysRemaining(ev);
+            const isRedundant=checkRedundant(ev);
+            const totalDays=(ev.daysLocked||7)+(ev.extensionDays||0);
             return(
-              <div key={ev.id} style={{border:`1px solid ${color}33`,borderLeft:`4px solid ${color}`,borderRadius:"8px",padding:"14px",marginBottom:"10px",background:isTypeA?"#fff8f8":"#fdf8ff",display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:"12px"}}>
-                <div style={{flex:1}}>
-                  <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"6px",flexWrap:"wrap"}}>
-                    <span style={{background:color,color:"white",padding:"2px 10px",borderRadius:"10px",fontSize:"11px",fontWeight:"700"}}>{isTypeA?"Type A — GH Lock":"Type B — Individual"}</span>
-                    <strong style={{color,fontSize:"14px"}}>{ev.greenhouseId}</strong>
-                    <span style={{fontSize:"13px",color:C.textMid}}>{ev.daysLocked} days locked</span>
+              <div key={ev.id} style={{border:`1px solid ${color}33`,borderLeft:`4px solid ${color}`,borderRadius:"8px",padding:"14px",marginBottom:"10px",background:isTypeA?"#fff8f8":"#fdf8ff"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:"12px"}}>
+                  <div style={{flex:1}}>
+                    <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"6px",flexWrap:"wrap"}}>
+                      <span style={{background:color,color:"white",padding:"2px 10px",borderRadius:"10px",fontSize:"11px",fontWeight:"700"}}>{isTypeA?"Type A — GH Lock":"Type B — Individual"}</span>
+                      <strong style={{color,fontSize:"14px"}}>{ev.greenhouseId}</strong>
+                      <span style={{fontSize:"13px",color:C.textMid}}>{totalDays} days total {ev.extensionDays>0?`(+${ev.extensionDays} extended)`:""}</span>
+                      <span style={{background:daysLeft<=2?"#ffe5e5":daysLeft<=5?"#fff8ee":"#eafaf1",color:daysLeft<=2?C.red:daysLeft<=5?C.orange:C.green,padding:"2px 8px",borderRadius:"10px",fontSize:"11px",fontWeight:"700"}}>{daysLeft}d left</span>
+                      {isRedundant&&<span style={{background:"#fff8ee",color:C.gold,padding:"2px 8px",borderRadius:"10px",fontSize:"11px"}}>⚠️ Redundant with Type A</span>}
+                    </div>
+                    <div style={{fontSize:"12px",color:C.textMid,marginBottom:"4px"}}><strong>{staffNames.length} staff:</strong> {staffNames.length>0?staffNames.join(", "):"None"}</div>
+                    {ev.reason&&<div style={{fontSize:"12px",color:C.textLight}}>📝 {ev.reason}</div>}
+                    {ev.extensionDays>0&&<div style={{fontSize:"11px",color:C.teal,marginTop:"2px"}}>⏱️ Extended {ev.extensionDays} days — last extended: {fmtISOReadable(ev.lastExtendedAt)}</div>}
+                    <div style={{fontSize:"11px",color:C.textLight,marginTop:"4px"}}>Created: {fmtISOReadable(ev.createdAt)}</div>
+
+                    {/* Extend UI */}
+                    {extendId===ev.id&&(
+                      <div style={{marginTop:"10px",display:"flex",alignItems:"center",gap:"8px",background:"#f0fdfb",padding:"10px",borderRadius:"6px"}}>
+                        <span style={{fontSize:"12px",color:C.navy,fontWeight:"600"}}>Extend by:</span>
+                        <input type="number" min="1" max="90" value={extendDays} onChange={e=>setExtendDays(parseInt(e.target.value)||7)} style={{...inp,width:"70px",textAlign:"center"}}/>
+                        <span style={{fontSize:"12px",color:C.textMid}}>days</span>
+                        <button onClick={()=>extendEvent(ev.id)} style={{...btn(false,C.teal),padding:"4px 12px",fontSize:"12px"}}>✓ Extend</button>
+                        <button onClick={()=>setExtendId(null)} style={{...btn(false,"#95a5a6"),padding:"4px 10px",fontSize:"12px"}}>Cancel</button>
+                      </div>
+                    )}
                   </div>
-                  <div style={{fontSize:"12px",color:C.textMid,marginBottom:"4px"}}>
-                    <strong>{staffNames.length} staff:</strong> {staffNames.length>0?staffNames.join(", "):"None auto-detected"}
-                  </div>
-                  {ev.reason&&<div style={{fontSize:"12px",color:C.textLight}}>📝 {ev.reason}</div>}
-                  <div style={{fontSize:"11px",color:C.textLight,marginTop:"4px"}}>Created: {fmtISOReadable(ev.createdAt)}</div>
+                  {role==="gm"&&(
+                    <div style={{display:"flex",gap:"6px",flexShrink:0}}>
+                      <button onClick={()=>{setExtendId(extendId===ev.id?null:ev.id);setExtendDays(7);}} style={{...btn(false,C.teal),padding:"5px 10px",fontSize:"12px"}}>⏱️ Extend</button>
+                      <button onClick={()=>removeEvent(ev.id)} style={{...btn(false,C.red),padding:"5px 10px",fontSize:"12px"}}>End Early</button>
+                    </div>
+                  )}
                 </div>
-                {role==="gm"&&<button onClick={()=>removeEvent(ev.id)} style={{...btn(false,C.red),padding:"5px 12px",fontSize:"12px",flexShrink:0}}>Remove</button>}
               </div>
             );
           })}
         </div>
       )}
-      {quarantine.length===0&&<p style={{color:C.textLight,fontSize:"13px",textAlign:"center",padding:"20px 0"}}>No active quarantine events.</p>}
+      {quarantine.length===0&&<p style={{color:C.textLight,fontSize:"13px",textAlign:"center",padding:"20px 0"}}>No active quarantine orders.</p>}
+
+      {/* Expired history */}
+      {(quarantineHistory.length>0)&&(
+        <div>
+          <button onClick={()=>setShowHistory(!showHistory)} style={{...btn(false,"#95a5a6"),marginBottom:"10px"}}>
+            {showHistory?"▲ Hide":"▼ Show"} Expired/Closed History ({quarantineHistory.length})
+          </button>
+          {showHistory&&(
+            <div style={{background:C.light,borderRadius:"8px",padding:"14px"}}>
+              {quarantineHistory.map((ev,i)=>{
+                const isTypeA=ev.quarantineType==="A"||!ev.quarantineType;
+                const color=isTypeA?"#e74c3c":"#8e44ad";
+                const staffNames=ev.staffIds?.map(id=>staff.find(s=>s.id===id)?.name||id)||[];
+                return(
+                  <div key={ev.id||i} style={{borderLeft:`3px solid ${color}88`,padding:"8px 12px",marginBottom:"8px",background:"white",borderRadius:"4px",opacity:0.75}}>
+                    <div style={{display:"flex",gap:"8px",alignItems:"center",flexWrap:"wrap",marginBottom:"4px"}}>
+                      <span style={{background:`${color}22`,color,padding:"2px 8px",borderRadius:"8px",fontSize:"11px",fontWeight:"700"}}>{isTypeA?"Type A":"Type B"}</span>
+                      <span style={{fontWeight:"700",color:C.textDark,fontSize:"13px"}}>{ev.greenhouseId}</span>
+                      {ev.closedEarly&&<span style={{background:"#fff8ee",color:C.orange,padding:"2px 8px",borderRadius:"8px",fontSize:"11px"}}>Closed early</span>}
+                    </div>
+                    <div style={{fontSize:"12px",color:C.textMid}}>{staffNames.join(", ")||"No staff"}</div>
+                    {ev.reason&&<div style={{fontSize:"11px",color:C.textLight}}>📝 {ev.reason}</div>}
+                    <div style={{fontSize:"11px",color:C.textLight,marginTop:"2px"}}>Created: {fmtISOReadable(ev.createdAt)}{ev.closedAt?` | Closed: ${fmtISOReadable(ev.closedAt)}`:""}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BACKUP PAGE — Export + Import
+// ═══════════════════════════════════════════════════════════════════════════════
+function BackupPage({staff,ghList,activities,cropTypes,clusters,clusterTransitions,demand,absences,schedule,scheduleSummary,quarantine,quarantineHistory,cycles,activeCycleId,tolerance,exportBackup,handleJSONFileRead,importMergeMode,setImportMergeMode,btn,inp,card,C,API,adelaideTime}){
+  const fileInputRef=useRef(null);
+
+  return(
+    <div>
+      <h2 style={{color:C.navy,marginBottom:"4px"}}>💾 Backup & Restore</h2>
+      <p style={{color:C.textMid,fontSize:"13px",marginBottom:"20px"}}>
+        Export all data to a JSON file before pushing code to GitHub. After a Render redeploy, use Import to restore everything in one click.
+      </p>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"20px"}}>
+
+        {/* EXPORT */}
+        <div style={{...card,borderTop:`4px solid ${C.green}`}}>
+          <h3 style={{color:C.navy,marginBottom:"8px"}}>📤 Export Backup</h3>
+          <p style={{fontSize:"13px",color:C.textMid,marginBottom:"16px"}}>Downloads a complete snapshot of your current data — staff, greenhouses, activities, crop types, planning cycles, demand, absences, and schedule.</p>
+
+          <div style={{background:C.light,borderRadius:"8px",padding:"14px",marginBottom:"16px"}}>
+            <div style={{fontSize:"13px",color:C.textMid,marginBottom:"8px",fontWeight:"700"}}>What will be exported:</div>
+            {[[`👥 ${staff.length} staff members`,C.blue],
+              [`🏗️ ${ghList.length} greenhouses`,C.teal],
+              [`📋 ${cycles.length} planning cycles`,C.orange],
+              [`📅 Schedule: ${schedule?"Yes":"None yet"}`,schedule?C.green:C.textLight],
+              [`⚙️ ${activities.length} activities, ${cropTypes.length} crop types`,C.purple],
+            ].map(([label,color])=>(
+              <div key={label} style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"6px",fontSize:"13px"}}>
+                <span style={{color,fontWeight:"600"}}>✓</span>
+                <span style={{color:C.textMid}}>{label}</span>
+              </div>
+            ))}
+          </div>
+
+          <button onClick={exportBackup} style={{...btn(false,C.green),width:"100%",padding:"12px",fontSize:"15px"}}>📤 Export Full Backup (JSON)</button>
+          <p style={{fontSize:"11px",color:C.textLight,marginTop:"8px",textAlign:"center"}}>File: greenhouse-backup-{new Date().toLocaleDateString("en-AU").replace(/\//g,"-")}.json</p>
+          <p style={{fontSize:"11px",color:C.textLight,textAlign:"center"}}>Adelaide time: {adelaideTime}</p>
+        </div>
+
+        {/* IMPORT */}
+        <div style={{...card,borderTop:`4px solid ${C.blue}`}}>
+          <h3 style={{color:C.navy,marginBottom:"8px"}}>📥 Import from Backup</h3>
+          <p style={{fontSize:"13px",color:C.textMid,marginBottom:"16px"}}>Select a previously exported JSON file to restore your data. You will see a full preview before anything is committed.</p>
+
+          <div style={{marginBottom:"14px"}}>
+            <label style={{display:"block",fontSize:"13px",fontWeight:"700",color:C.navy,marginBottom:"8px"}}>Import Mode:</label>
+            <div style={{display:"flex",gap:"10px"}}>
+              {[["replace","🔄 Replace All"],["merge","➕ Merge"]].map(([v,l])=>(
+                <label key={v} style={{flex:1,display:"flex",gap:"8px",padding:"10px",border:`2px solid ${importMergeMode===v?C.teal:C.border}`,borderRadius:"8px",cursor:"pointer",background:importMergeMode===v?"#f0fdfb":"white"}}>
+                  <input type="radio" value={v} checked={importMergeMode===v} onChange={()=>setImportMergeMode(v)}/>
+                  <div><div style={{fontWeight:"700",color:C.navy,fontSize:"13px"}}>{l}</div></div>
+                </label>
+              ))}
+            </div>
+            <div style={{fontSize:"12px",color:C.textMid,marginTop:"6px"}}>
+              {importMergeMode==="replace"?"Replace All: overwrites all current data completely.":"Merge: adds new staff only, keeps existing data."}
+            </div>
+          </div>
+
+          {importMergeMode==="replace"&&(
+            <div style={{background:"#fff5f5",border:`1px solid ${C.red}`,borderRadius:"6px",padding:"10px",marginBottom:"14px",fontSize:"12px",color:C.red}}>
+              ⚠️ Replace mode will overwrite ALL current data. Make sure you export first if you want to keep anything.
+            </div>
+          )}
+
+          <input type="file" ref={fileInputRef} accept=".json" style={{display:"none"}} onChange={e=>{if(e.target.files[0])handleJSONFileRead(e.target.files[0]);}}/>
+          <button onClick={()=>fileInputRef.current?.click()} style={{...btn(false,C.blue),width:"100%",padding:"12px",fontSize:"15px"}}>📂 Select JSON File to Import</button>
+          <p style={{fontSize:"11px",color:C.textLight,marginTop:"8px",textAlign:"center"}}>A preview will appear before any data is changed.</p>
+        </div>
+      </div>
+
+      {/* Instructions */}
+      <div style={{...card,marginTop:"20px",borderLeft:`4px solid ${C.gold}`}}>
+        <h4 style={{color:C.navy,margin:"0 0 10px 0"}}>📋 Workflow: How to survive a GitHub push</h4>
+        <ol style={{margin:0,paddingLeft:"20px",lineHeight:"2",fontSize:"13px",color:C.textMid}}>
+          <li>Your friend enters all staff and data in the live app</li>
+          <li>Click <strong>"Export Full Backup"</strong> above → save the JSON file to your computer</li>
+          <li>Make your code changes, push to GitHub</li>
+          <li>Render redeploys → data.json is wiped (expected)</li>
+          <li>App reloads with empty data</li>
+          <li>Click <strong>"Select JSON File to Import"</strong> → select your backup file</li>
+          <li>Review the preview → click <strong>"Confirm Import"</strong></li>
+          <li>All data is restored instantly ✅</li>
+        </ol>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BULK CSV IMPORT
+// ═══════════════════════════════════════════════════════════════════════════════
+function BulkCSVImport({staff,setStaff,API,btn,inp,C,setBackupReminder}){
+  const [csvText,setCsvText]=useState("");
+  const [preview,setPreview]=useState([]);
+  const [importMode,setImportMode]=useState("merge");
+  const [result,setResult]=useState(null);
+  const fileRef=useRef(null);
+
+  const parseCSV=(text)=>{
+    const lines=text.trim().split("\n");
+    if(lines.length<2)return[];
+    const headers=lines[0].split(",").map(h=>h.trim().toLowerCase().replace(/\s+/g,""));
+    return lines.slice(1).map(line=>{
+      const vals=line.split(",").map(v=>v.trim().replace(/^"|"$/g,""));
+      const row={};
+      headers.forEach((h,i)=>{row[h]=vals[i]||"";});
+      return row;
+    }).filter(r=>r.id&&r.name);
+  };
+
+  const handleFile=(file)=>{
+    const reader=new FileReader();
+    reader.onload=(e)=>{setCsvText(e.target.result);const rows=parseCSV(e.target.result);setPreview(rows.slice(0,10));};
+    reader.readAsText(file);
+  };
+
+  const doImport=async()=>{
+    const rows=parseCSV(csvText);
+    if(!rows.length)return alert("No valid rows found. Check CSV format.");
+    try{
+      const res=await axios.post(`${API}/staff/bulk-import`,{rows,mode:importMode});
+      setResult(res.data);
+      // Refresh staff from backend
+      const d=await axios.get(`${API}/data`);
+      if(d.data.staff?.length>0){setStaff(d.data.staff);setBackupReminder(true);}
+    }catch(e){alert("Import error: "+e.message);}
+  };
+
+  return(
+    <div>
+      <p style={{color:C.textMid,fontSize:"13px",marginBottom:"12px"}}>
+        Upload a CSV file with columns: <code style={{background:"#f0f4f8",padding:"2px 6px",borderRadius:"3px"}}>id, name, hoursPerDay, overtimeLimit</code>. After import, assign activities/GH/crop types per staff using the Edit button.
+      </p>
+
+      <div style={{marginBottom:"12px",padding:"10px",background:"#f8f9fa",borderRadius:"6px",fontSize:"12px",color:C.textMid}}>
+        <strong>CSV format example:</strong><br/>
+        <code>id,name,hoursPerDay,overtimeLimit<br/>STF001,John Smith,7,30<br/>STF002,Jane Doe,7,30</code>
+      </div>
+
+      <div style={{display:"flex",gap:"10px",marginBottom:"12px",alignItems:"center",flexWrap:"wrap"}}>
+        <input type="file" ref={fileRef} accept=".csv,.txt" style={{display:"none"}} onChange={e=>{if(e.target.files[0])handleFile(e.target.files[0]);}}/>
+        <button onClick={()=>fileRef.current?.click()} style={btn(false,C.blue)}>📂 Upload CSV</button>
+        <div style={{display:"flex",gap:"8px",alignItems:"center"}}>
+          <label style={{fontSize:"13px",color:C.textMid}}>Mode:</label>
+          <select value={importMode} onChange={e=>setImportMode(e.target.value)} style={{...inp,fontSize:"12px"}}>
+            <option value="merge">Merge (skip duplicates)</option>
+            <option value="replace">Replace all staff</option>
+          </select>
+        </div>
+      </div>
+
+      {csvText&&(
+        <div>
+          <textarea value={csvText} onChange={e=>{setCsvText(e.target.value);setPreview(parseCSV(e.target.value).slice(0,10));}}
+            style={{...inp,width:"100%",height:"120px",fontFamily:"monospace",fontSize:"12px",marginBottom:"10px",boxSizing:"border-box"}}
+            placeholder="Or paste CSV text here..."/>
+
+          {preview.length>0&&(
+            <div style={{marginBottom:"12px"}}>
+              <div style={{fontSize:"12px",fontWeight:"700",color:C.navy,marginBottom:"6px"}}>Preview (first {preview.length} rows):</div>
+              <table style={{borderCollapse:"collapse",fontSize:"12px",width:"100%"}}>
+                <thead><tr style={{background:C.navy,color:"white"}}><th style={{padding:"6px 10px",textAlign:"left"}}>ID</th><th style={{padding:"6px 10px",textAlign:"left"}}>Name</th><th style={{padding:"6px 10px",textAlign:"center"}}>Hrs/Day</th><th style={{padding:"6px 10px",textAlign:"center"}}>OT Limit</th></tr></thead>
+                <tbody>{preview.map((r,i)=><tr key={i} style={{background:i%2===0?C.light:C.white}}><td style={{padding:"5px 10px",fontFamily:"monospace",fontSize:"11px"}}>{r.id||r["id"]}</td><td style={{padding:"5px 10px"}}>{r.name}</td><td style={{padding:"5px 10px",textAlign:"center"}}>{r.hoursperday||r.hoursPerDay||"7"}</td><td style={{padding:"5px 10px",textAlign:"center"}}>{r.overtimelimit||r.overtimeLimit||"30"}</td></tr>)}</tbody>
+              </table>
+              <div style={{fontSize:"12px",color:C.textLight,marginTop:"4px"}}>Total rows in file: {parseCSV(csvText).length}</div>
+            </div>
+          )}
+          <button onClick={doImport} style={{...btn(false,C.green),padding:"10px 24px"}}>✅ Import {parseCSV(csvText).length} Staff</button>
+        </div>
+      )}
+
+      {!csvText&&(
+        <textarea onChange={e=>{setCsvText(e.target.value);setPreview(parseCSV(e.target.value).slice(0,10));}}
+          style={{...inp,width:"100%",height:"100px",fontFamily:"monospace",fontSize:"12px",marginBottom:"10px",boxSizing:"border-box"}}
+          placeholder="Or paste CSV content here directly..."/>
+      )}
+
+      {result&&(
+        <div style={{marginTop:"12px",background:result.errors?.length?"#fff8ee":"#eafaf1",borderRadius:"6px",padding:"12px",fontSize:"13px"}}>
+          <strong>{result.message}</strong>
+          {result.errors?.length>0&&<div style={{marginTop:"6px",color:C.red,fontSize:"12px"}}>{result.errors.join("\n")}</div>}
+          <div style={{fontSize:"12px",color:C.textMid,marginTop:"4px"}}>Total staff now in system: {result.totalStaff}</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1094,9 +1652,9 @@ function QuarantinePanel({staff,ghList,quarantine,setQuarantine,schedule,btn,inp
 // ═══════════════════════════════════════════════════════════════════════════════
 // STAFF PROFILE POPUP
 // ═══════════════════════════════════════════════════════════════════════════════
-function StaffProfilePopup({selectedStaff,setSelectedStaff,staff,setStaff,activities,ghNames,cropTypes,absences,calcVersatility,btn,inp,C,ALL_DAYS,DAY_SHORT}){
+function StaffProfilePopup({selectedStaff,setSelectedStaff,staff,setStaff,activities,ghNames,cropTypes,absences,calcVersatility,btn,inp,C,ALL_DAYS,DAY_SHORT,setBackupReminder}){
   const [expandedAct,setExpandedAct]=useState(null);
-  const update=(updates)=>{const u={...selectedStaff,...updates};setSelectedStaff(u);setStaff(staff.map(s=>s.id===selectedStaff.id?u:s));};
+  const update=(updates)=>{const u={...selectedStaff,...updates};setSelectedStaff(u);setStaff(staff.map(s=>s.id===selectedStaff.id?u:s));setBackupReminder(true);};
   const staffActs=(selectedStaff.activities||[]).map(a=>typeof a==="string"?{activity:a,allGreenhouses:true,greenhouses:[...ghNames],cropTypes:[...cropTypes]}:a);
   const hasActivity=(actName)=>staffActs.some(a=>a.activity===actName);
   const toggleActivity=(actName,checked)=>{const newActs=checked?[...staffActs,{activity:actName,allGreenhouses:true,greenhouses:[...ghNames],cropTypes:[...cropTypes]}]:staffActs.filter(a=>a.activity!==actName);if(!checked&&expandedAct===actName)setExpandedAct(null);update({activities:newActs});};
@@ -1143,7 +1701,7 @@ function StaffProfilePopup({selectedStaff,setSelectedStaff,staff,setStaff,activi
         </div>
         <div style={{marginBottom:"20px"}}>
           <h4 style={{color:C.navy,marginBottom:"6px",fontSize:"14px"}}>⚙️ Activities, Greenhouses & Crop Types</h4>
-          <p style={{color:C.textMid,fontSize:"12px",marginBottom:"12px"}}>Tick an activity to assign it. Expand to configure which greenhouses and crop types apply for that activity.</p>
+          <p style={{color:C.textMid,fontSize:"12px",marginBottom:"12px"}}>Tick an activity. Expand to set which greenhouses and crop types apply for that specific activity in that specific greenhouse combination.</p>
           <div style={{display:"flex",flexDirection:"column",gap:"6px"}}>
             {activities.map(actName=>{
               const isChecked=hasActivity(actName);const actObj=getActObj(actName);const isExpanded=expandedAct===actName&&isChecked;
@@ -1169,7 +1727,8 @@ function StaffProfilePopup({selectedStaff,setSelectedStaff,staff,setStaff,activi
                         {actObj.allGreenhouses&&<div style={{fontSize:"12px",color:C.textLight,fontStyle:"italic"}}>✓ Can perform this activity in any greenhouse</div>}
                       </div>
                       <div>
-                        <div style={{fontSize:"13px",fontWeight:"600",color:C.navy,marginBottom:"8px"}}>🌱 Crop Types:</div>
+                        <div style={{fontSize:"13px",fontWeight:"600",color:C.navy,marginBottom:"8px"}}>🌱 Crop Types for this activity:</div>
+                        <p style={{fontSize:"12px",color:C.textMid,marginBottom:"8px"}}>Staff must have the crop type listed here to be assigned to a slot with that crop.</p>
                         <div style={{display:"flex",flexWrap:"wrap",gap:"5px"}}>{cropTypes.map(ct=><label key={ct} style={{display:"flex",alignItems:"center",gap:"3px",background:(actObj.cropTypes||[]).includes(ct)?"#fdebd0":"white",padding:"4px 8px",borderRadius:"5px",cursor:"pointer",border:`1px solid ${(actObj.cropTypes||[]).includes(ct)?C.orange:C.border}`,fontSize:"12px"}}><input type="checkbox" checked={(actObj.cropTypes||[]).includes(ct)} onChange={e=>{const cts=actObj.cropTypes||[];updateActObj(actName,{cropTypes:e.target.checked?[...cts,ct]:cts.filter(c=>c!==ct)});}} style={{accentColor:C.orange}}/>{ct}</label>)}</div>
                       </div>
                     </div>
@@ -1191,13 +1750,14 @@ function StaffProfilePopup({selectedStaff,setSelectedStaff,staff,setStaff,activi
 // ═══════════════════════════════════════════════════════════════════════════════
 // ADD STAFF FORM
 // ═══════════════════════════════════════════════════════════════════════════════
-function AddStaffForm({staff,setStaff,btn,inp}){
+function AddStaffForm({staff,setStaff,btn,inp,setBackupReminder}){
   const [name,setName]=useState("");const [id,setId]=useState("");const [hours,setHours]=useState(7);
   const add=()=>{
     if(!name.trim()||!id.trim())return alert("Please enter both Staff ID and Name");
     if(staff.find(s=>s.id===id.trim()))return alert("Staff ID already exists");
     setStaff([...staff,{id:id.trim(),name:name.trim(),hoursPerDay:parseInt(hours)||7,dayHours:{Monday:parseInt(hours)||7,Tuesday:parseInt(hours)||7,Wednesday:parseInt(hours)||7,Thursday:parseInt(hours)||7,Friday:parseInt(hours)||7,Saturday:0,Sunday:0},overtimeLimit:30,activities:[],versatility:0}]);
     setName("");setId("");setHours(7);
+    setBackupReminder(true);
   };
   return(
     <div>

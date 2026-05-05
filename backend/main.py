@@ -39,7 +39,8 @@ def default_data():
         "cycles": [],
         "activeCycleId": None,
         "overtime": {},
-        "quarantine": []
+        "quarantine": [],
+        "quarantineHistory": []
     }
 
 def load_data():
@@ -141,26 +142,61 @@ def calc_versatility_full(s, all_activities, gh_names, all_crops):
     return round((a_score + g_score + c_score) / 3 * 100)
 
 # ---------------------------------------------------------------------------
-# Staff eligibility check
+# Staff eligibility check — 3-way: activity + greenhouse + crop type
 # ---------------------------------------------------------------------------
 def staff_eligible_for_task(s, activity, gh_name, gh_crops):
+    """
+    Returns True only if staff has:
+      1. The activity
+      2. The greenhouse (or allGreenhouses=True) for that activity
+      3. At least one matching crop type for that activity (if gh_crops provided)
+    """
     for act_obj in s.get("activities", []):
         if not isinstance(act_obj, dict):
             continue
         if act_obj.get("activity") != activity:
             continue
+        # Check greenhouse
         if act_obj.get("allGreenhouses"):
             gh_ok = True
         else:
             gh_ok = gh_name in act_obj.get("greenhouses", [])
         if not gh_ok:
             continue
+        # Check crop type — if gh has crops defined, staff must match at least one
         if gh_crops:
             staff_crops = set(act_obj.get("cropTypes", []))
             if not any(ct in staff_crops for ct in gh_crops):
                 continue
         return True
     return False
+
+def check_eligibility_details(s, activity, gh_name, gh_crops):
+    """Returns dict explaining why staff fails eligibility — for OT warnings."""
+    has_activity = False
+    for act_obj in s.get("activities", []):
+        if not isinstance(act_obj, dict):
+            continue
+        if act_obj.get("activity") != activity:
+            continue
+        has_activity = True
+        # Check GH
+        if act_obj.get("allGreenhouses"):
+            gh_ok = True
+        else:
+            gh_ok = gh_name in act_obj.get("greenhouses", [])
+        if not gh_ok:
+            return {"eligible": False, "reason": f"Not qualified for {gh_name} under {activity}"}
+        # Check crop
+        if gh_crops:
+            staff_crops = set(act_obj.get("cropTypes", []))
+            missing = [ct for ct in gh_crops if ct not in staff_crops]
+            if missing:
+                return {"eligible": False, "reason": f"Missing crop types for {activity} in {gh_name}: {', '.join(missing)}"}
+        return {"eligible": True, "reason": ""}
+    if not has_activity:
+        return {"eligible": False, "reason": f"Does not have activity: {activity}"}
+    return {"eligible": False, "reason": "Not eligible"}
 
 # ---------------------------------------------------------------------------
 # Absence helpers
@@ -245,18 +281,29 @@ def can_move_cluster(from_gh, to_gh, tolerance, cluster_map):
 def build_quarantine_map(quarantine, current_date_str):
     qmap = {}
     try:
-        current = datetime.fromisoformat(current_date_str)
+        current = datetime.fromisoformat(current_date_str.replace("Z", "+00:00"))
     except Exception:
         current = datetime.now(ADELAIDE_TZ)
     for event in quarantine:
         try:
-            start = datetime.fromisoformat(event.get("startDate", current.isoformat()))
+            start_str = event.get("startDate", current.isoformat())
+            start = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
         except Exception:
             continue
         days_lock = event.get("daysLocked", 7)
-        end = start + timedelta(days=days_lock)
-        if not (start <= current.replace(tzinfo=None) if current.tzinfo else current <= end):
-            pass
+        # Handle extensions
+        extra_days = event.get("extensionDays", 0)
+        total_days = days_lock + extra_days
+        end = start + timedelta(days=total_days)
+        # Make timezone-aware comparison
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=ADELAIDE_TZ)
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=ADELAIDE_TZ)
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=ADELAIDE_TZ)
+        if not (start <= current <= end):
+            continue
         allowed_ghs = event.get("allowedGreenhouses", [])
         for sid in event.get("staffIds", []):
             if sid not in qmap:
@@ -294,12 +341,48 @@ def calc_schedule_summary(schedule, total_capacity, total_demand):
     }
 
 # ---------------------------------------------------------------------------
-# Core optimiser
+# Efficiency score calculation
+# ---------------------------------------------------------------------------
+def calc_efficiency_score(schedule, demand, staff, absences):
+    """
+    Efficiency = weighted average of:
+    - Coverage rate: assigned hours / demanded hours (60%)
+    - Utilisation rate: assigned hours / available capacity (40%)
+    Returns 0-100 score.
+    """
+    if not schedule or not demand:
+        return None
+    active_days = list(schedule.keys())
+    availability = build_staff_availability(staff, absences, active_days)
+    total_demanded = sum(
+        int(h) for acts in demand.values() for h in acts.values() if h
+    )
+    total_capacity = sum(
+        sum(availability[s["id"]][d] for d in active_days) for s in staff
+    )
+    total_assigned = sum(
+        a["hours"] for day_list in schedule.values()
+        for a in day_list if not a.get("unassigned")
+    )
+    if total_demanded == 0 or total_capacity == 0:
+        return None
+    coverage = min(total_assigned / total_demanded, 1.0)
+    utilisation = min(total_assigned / total_capacity, 1.0)
+    score = round((coverage * 0.6 + utilisation * 0.4) * 100, 1)
+    return score
+
+# ---------------------------------------------------------------------------
+# Core optimiser — with crop-type demand awareness
 # ---------------------------------------------------------------------------
 def run_optimiser(staff, greenhouses, activities, demand, absences,
                   clusters, cluster_transitions, tolerance,
-                  quarantine=None, current_date_str=None):
-
+                  quarantine=None, current_date_str=None,
+                  crop_demand=None):
+    """
+    crop_demand: {gh_name: {crop_type: {activity: hours}}}
+    If provided, tasks are built per crop type so the 3-way check uses
+    the specific crop demanded for each GH slot.
+    """
     ghs = [normalise_gh(g) for g in greenhouses]
     gh_names = [g["name"] for g in ghs]
     gh_lookup = {g["name"]: g for g in ghs}
@@ -325,16 +408,41 @@ def run_optimiser(staff, greenhouses, activities, demand, absences,
     staff_sorted = sorted(staff, key=lambda s: s["_v"], reverse=True)
     availability = build_staff_availability(staff, absences, active_days)
 
+    # Build tasks — prefer crop_demand for precise 3-way eligibility
     tasks = []
-    for gh_name, acts in demand.items():
-        if gh_name not in gh_lookup:
-            continue
-        gh_obj = gh_lookup[gh_name]
-        gh_crops = gh_obj.get("cropTypes", [])
-        for activity, hours in acts.items():
-            h = int(hours) if hours else 0
-            if h > 0:
-                tasks.append({"gh": gh_name, "activity": activity, "weekly_hours": h, "gh_crops": gh_crops})
+    no_match_warnings = []  # collect slots where nobody qualifies
+
+    if crop_demand:
+        for gh_name, crop_rows in crop_demand.items():
+            if gh_name not in gh_lookup:
+                continue
+            for crop_type, acts in crop_rows.items():
+                for activity, hours in acts.items():
+                    h = int(hours) if hours else 0
+                    if h > 0:
+                        tasks.append({
+                            "gh": gh_name,
+                            "activity": activity,
+                            "weekly_hours": h,
+                            "gh_crops": [crop_type],  # specific crop for this task
+                            "crop_type": crop_type
+                        })
+    else:
+        for gh_name, acts in demand.items():
+            if gh_name not in gh_lookup:
+                continue
+            gh_obj = gh_lookup[gh_name]
+            gh_crops = gh_obj.get("cropTypes", [])
+            for activity, hours in acts.items():
+                h = int(hours) if hours else 0
+                if h > 0:
+                    tasks.append({
+                        "gh": gh_name,
+                        "activity": activity,
+                        "weekly_hours": h,
+                        "gh_crops": gh_crops,
+                        "crop_type": None
+                    })
 
     hours_used = {s["id"]: {d: 0.0 for d in active_days} for s in staff}
     staff_day_gh = {s["id"]: {d: None for d in active_days} for s in staff}
@@ -346,6 +454,18 @@ def run_optimiser(staff, greenhouses, activities, demand, absences,
         activity = task["activity"]
         weekly_hours = task["weekly_hours"]
         gh_crops = task["gh_crops"]
+
+        # Check if any staff qualifies at all — warn if not
+        eligible_check = [s for s in staff_sorted
+                          if staff_eligible_for_task(s, activity, gh, gh_crops)]
+        if not eligible_check:
+            no_match_warnings.append({
+                "gh": gh,
+                "activity": activity,
+                "cropType": task.get("crop_type"),
+                "message": f"No staff qualified for {activity} in {gh}" +
+                           (f" with crop {task.get('crop_type')}" if task.get("crop_type") else "")
+            })
 
         base = weekly_hours // n_days
         remainder = weekly_hours % n_days
@@ -404,6 +524,7 @@ def run_optimiser(staff, greenhouses, activities, demand, absences,
                 result[day].append({
                     "staffId": sid, "staffName": s["name"],
                     "greenhouse": gh, "activity": activity,
+                    "cropType": task.get("crop_type"),
                     "hours": assign, "transitionMins": trans_cost,
                     "unassigned": False, "reoptimised": False
                 })
@@ -414,22 +535,33 @@ def run_optimiser(staff, greenhouses, activities, demand, absences,
                     "staffId": "UNASSIGNED",
                     "staffName": f"{round(remaining,2)}h unassigned - capacity exceeded",
                     "greenhouse": gh, "activity": activity,
+                    "cropType": task.get("crop_type"),
                     "hours": round(remaining, 2), "transitionMins": 0,
                     "unassigned": True, "reoptimised": False
                 })
 
-    total_demand = sum(t["weekly_hours"] for t in tasks)
+    total_demand_hrs = sum(t["weekly_hours"] for t in tasks)
     total_capacity = sum(sum(availability[s["id"]][d] for d in active_days) for s in staff)
-    summary = calc_schedule_summary(result, total_capacity, total_demand)
+    summary = calc_schedule_summary(result, total_capacity, total_demand_hrs)
+    summary["noMatchWarnings"] = no_match_warnings
+
+    # Efficiency score
+    flat_demand = {}
+    for t in tasks:
+        flat_demand.setdefault(t["gh"], {})[t["activity"]] = \
+            flat_demand.get(t["gh"], {}).get(t["activity"], 0) + t["weekly_hours"]
+    summary["efficiencyScore"] = calc_efficiency_score(result, flat_demand, staff, absences)
+
     return result, summary
 
 # ---------------------------------------------------------------------------
-# Reoptimise
+# Reoptimise — with mid-week disruption tolerance (5%)
 # ---------------------------------------------------------------------------
 def run_reoptimise(existing_schedule, affected_staff_id, affected_days,
                    staff, greenhouses, activities, demand, absences,
                    clusters, cluster_transitions, tolerance,
-                   quarantine=None, current_date_str=None):
+                   quarantine=None, current_date_str=None,
+                   disruption_tolerance_pct=5):
 
     ghs = [normalise_gh(g) for g in greenhouses]
     gh_names = [g["name"] for g in ghs]
@@ -444,12 +576,18 @@ def run_reoptimise(existing_schedule, affected_staff_id, affected_days,
     staff_sorted = sorted(staff, key=lambda s: s["_v"], reverse=True)
     availability = build_staff_availability(staff, absences, active_days)
 
+    # Calculate baseline efficiency before reoptimise
+    flat_demand = {gh: {act: int(h) for act, h in acts.items()}
+                   for gh, acts in demand.items() if acts}
+    baseline_score = calc_efficiency_score(existing_schedule, flat_demand, staff, absences)
+
     new_schedule = {}
     affected_tasks = []
     for day in active_days:
         day_assignments = existing_schedule.get(day, [])
         if day in affected_days:
-            new_schedule[day] = [a for a in day_assignments if a.get("staffId") != affected_staff_id and not a.get("unassigned")]
+            new_schedule[day] = [a for a in day_assignments
+                                 if a.get("staffId") != affected_staff_id and not a.get("unassigned")]
             for a in day_assignments:
                 if a.get("staffId") == affected_staff_id:
                     affected_tasks.append({**a, "day": day})
@@ -468,19 +606,32 @@ def run_reoptimise(existing_schedule, affected_staff_id, affected_days,
                 if staff_day_gh[sid][day] is None:
                     staff_day_gh[sid][day] = a.get("greenhouse")
 
+    # Count how many staff will be disrupted by a full reassignment
+    # We want minimum disruption — try to fill from most available staff first
     for task in affected_tasks:
         day = task["day"]
         gh = task["greenhouse"]
         activity = task["activity"]
         gh_obj = gh_lookup.get(gh, {})
         gh_crops = gh_obj.get("cropTypes", [])
+        if "cropType" in task and task["cropType"]:
+            gh_crops = [task["cropType"]]
         remaining = float(task["hours"])
 
-        eligible = [s for s in staff_sorted
-                    if s["id"] != affected_staff_id
-                    and availability[s["id"]][day] > hours_used[s["id"]][day]
-                    and staff_eligible_for_task(s, activity, gh, gh_crops)
-                    and (s["id"] not in qmap or gh in qmap[s["id"]])]
+        # Sort eligible by: (1) already in that GH today (min disruption), (2) versatility
+        def sort_for_min_disruption(s):
+            sid = s["id"]
+            already_in_gh = 1 if staff_day_gh[sid][day] == gh else 0
+            return (-already_in_gh, -s["_v"])
+
+        eligible = sorted(
+            [s for s in staff_sorted
+             if s["id"] != affected_staff_id
+             and availability[s["id"]][day] > hours_used[s["id"]][day]
+             and staff_eligible_for_task(s, activity, gh, gh_crops)
+             and (s["id"] not in qmap or gh in qmap[s["id"]])],
+            key=sort_for_min_disruption
+        )
 
         for s in eligible:
             if remaining <= 0:
@@ -517,9 +668,36 @@ def run_reoptimise(existing_schedule, affected_staff_id, affected_days,
                 "unassigned": True, "reoptimised": True
             })
 
-    total_demand = sum(int(h) for acts in demand.values() for h in acts.values() if h)
+    total_demand_hrs = sum(int(h) for acts in demand.values() for h in acts.values() if h)
     total_capacity = sum(sum(availability[s["id"]][d] for d in active_days) for s in staff)
-    summary = calc_schedule_summary(new_schedule, total_capacity, total_demand)
+    summary = calc_schedule_summary(new_schedule, total_capacity, total_demand_hrs)
+
+    # Check disruption threshold
+    new_score = calc_efficiency_score(new_schedule, flat_demand, staff, absences)
+    disruption_warning = None
+    if baseline_score is not None and new_score is not None:
+        loss = baseline_score - new_score
+        if loss > disruption_tolerance_pct:
+            disruption_warning = {
+                "baseline": baseline_score,
+                "newScore": new_score,
+                "loss": round(loss, 1),
+                "threshold": disruption_tolerance_pct,
+                "exceeded": True,
+                "message": f"Efficiency loss of {round(loss,1)}% exceeds {disruption_tolerance_pct}% tolerance. Consider reviewing manually."
+            }
+        else:
+            disruption_warning = {
+                "baseline": baseline_score,
+                "newScore": new_score,
+                "loss": round(loss, 1) if loss > 0 else 0,
+                "threshold": disruption_tolerance_pct,
+                "exceeded": False
+            }
+
+    summary["disruptionCheck"] = disruption_warning
+    summary["efficiencyScore"] = new_score
+
     return new_schedule, len(affected_tasks), summary
 
 # ---------------------------------------------------------------------------
@@ -554,7 +732,8 @@ def optimise(payload: dict):
             payload.get("activities", []), payload.get("demand", {}),
             payload.get("absences", {}), payload.get("clusters", []),
             payload.get("clusterTransitions", {}), payload.get("tolerance", 5),
-            payload.get("quarantine", []), payload.get("currentDate", adelaide_now())
+            payload.get("quarantine", []), payload.get("currentDate", adelaide_now()),
+            payload.get("cropDemand", None)
         )
         return {"schedule": schedule, "summary": summary}
     except Exception as e:
@@ -571,12 +750,201 @@ def reoptimise(payload: dict):
             payload.get("demand", {}), payload.get("absences", {}),
             payload.get("clusters", []), payload.get("clusterTransitions", {}),
             payload.get("tolerance", 5), payload.get("quarantine", []),
-            payload.get("currentDate", adelaide_now())
+            payload.get("currentDate", adelaide_now()),
+            payload.get("disruptionTolerancePct", 5)
         )
         return {"schedule": new_schedule, "affectedTasks": affected_count, "summary": summary}
     except Exception as e:
         import traceback
         return {"error": str(e), "trace": traceback.format_exc()}
+
+# ---------------------------------------------------------------------------
+# OT eligibility check endpoint
+# ---------------------------------------------------------------------------
+@app.post("/overtime/check-eligibility")
+def check_ot_eligibility(payload: dict):
+    """
+    Check if a staff member is eligible for an OT slot.
+    Returns eligible=True/False + reason if not eligible.
+    """
+    staff_list = payload.get("staff", [])
+    staff_id = payload.get("staffId")
+    activity = payload.get("activity")
+    gh_name = payload.get("greenhouse")
+    gh_crops = payload.get("ghCrops", [])
+
+    s = next((x for x in staff_list if x["id"] == staff_id), None)
+    if not s:
+        return {"eligible": False, "reason": "Staff member not found"}
+
+    result = check_eligibility_details(s, activity, gh_name, gh_crops)
+    return result
+
+# ---------------------------------------------------------------------------
+# Efficiency score endpoint
+# ---------------------------------------------------------------------------
+@app.post("/efficiency")
+def get_efficiency(payload: dict):
+    try:
+        score = calc_efficiency_score(
+            payload.get("schedule", {}),
+            payload.get("demand", {}),
+            payload.get("staff", []),
+            payload.get("absences", {})
+        )
+        return {"efficiencyScore": score}
+    except Exception as e:
+        return {"error": str(e)}
+
+# ---------------------------------------------------------------------------
+# Export / Import endpoints
+# ---------------------------------------------------------------------------
+@app.get("/export")
+def export_backup():
+    """Export complete app data as JSON backup."""
+    data = load_data()
+    return {
+        "exportedAt": adelaide_now(),
+        "version": "2.0",
+        "data": data
+    }
+
+@app.post("/import")
+def import_backup(payload: dict):
+    """
+    Import a full backup. mode: 'replace' or 'merge'.
+    merge = add new staff (by ID), skip duplicates; replace = overwrite all.
+    """
+    mode = payload.get("mode", "replace")
+    incoming = payload.get("data", {})
+    if not incoming:
+        return {"error": "No data provided"}
+
+    if mode == "replace":
+        if "greenhouses" in incoming:
+            incoming["greenhouses"] = [normalise_gh(g) for g in incoming["greenhouses"]]
+        if "staff" in incoming:
+            incoming["staff"] = [migrate_staff(s) for s in incoming["staff"]]
+        save_data(incoming)
+        return {
+            "message": "Data replaced successfully",
+            "staffCount": len(incoming.get("staff", [])),
+            "importedAt": adelaide_now()
+        }
+    else:  # merge
+        current = load_data()
+        incoming_staff = incoming.get("staff", [])
+        current_ids = {s["id"] for s in current["staff"]}
+        added = 0
+        skipped = 0
+        for s in incoming_staff:
+            if s["id"] not in current_ids:
+                current["staff"].append(migrate_staff(s))
+                added += 1
+            else:
+                skipped += 1
+        # Merge greenhouses
+        incoming_ghs = {g["name"] if isinstance(g, dict) else g
+                        for g in incoming.get("greenhouses", [])}
+        current_gh_names = {g["name"] for g in current["greenhouses"]}
+        for gh in incoming.get("greenhouses", []):
+            ghn = gh["name"] if isinstance(gh, dict) else gh
+            if ghn not in current_gh_names:
+                current["greenhouses"].append(normalise_gh(gh))
+        save_data(current)
+        return {
+            "message": f"Merge complete: {added} staff added, {skipped} skipped (duplicate IDs)",
+            "staffAdded": added,
+            "staffSkipped": skipped,
+            "importedAt": adelaide_now()
+        }
+
+@app.post("/import/preview")
+def preview_import(payload: dict):
+    """Preview what an import will do before committing."""
+    incoming = payload.get("data", {})
+    mode = payload.get("mode", "replace")
+    if not incoming:
+        return {"error": "No data provided"}
+
+    current = load_data()
+    incoming_staff = incoming.get("staff", [])
+    current_ids = {s["id"] for s in current["staff"]}
+
+    staff_preview = []
+    for s in incoming_staff:
+        status = "duplicate" if s["id"] in current_ids else "new"
+        staff_preview.append({
+            "id": s["id"],
+            "name": s["name"],
+            "status": status,
+            "activities": len(s.get("activities", []))
+        })
+
+    return {
+        "mode": mode,
+        "incomingStaffCount": len(incoming_staff),
+        "currentStaffCount": len(current["staff"]),
+        "newCount": len([x for x in staff_preview if x["status"] == "new"]),
+        "duplicateCount": len([x for x in staff_preview if x["status"] == "duplicate"]),
+        "staffPreview": staff_preview[:20],  # first 20 for preview
+        "hasCycles": len(incoming.get("cycles", [])) > 0,
+        "cycleCount": len(incoming.get("cycles", [])),
+        "hasGreenhouses": len(incoming.get("greenhouses", [])) > 0,
+        "ghCount": len(incoming.get("greenhouses", []))
+    }
+
+# ---------------------------------------------------------------------------
+# CSV bulk import
+# ---------------------------------------------------------------------------
+@app.post("/staff/bulk-import")
+def bulk_import_staff(payload: dict):
+    """
+    Import staff from parsed CSV rows.
+    Expected: [{id, name, hoursPerDay, overtimeLimit}]
+    Activities/GH/crops assigned later via staff profile.
+    """
+    rows = payload.get("rows", [])
+    mode = payload.get("mode", "merge")  # merge or replace
+    data = load_data()
+
+    if mode == "replace":
+        data["staff"] = []
+
+    current_ids = {s["id"] for s in data["staff"]}
+    added = 0
+    skipped = 0
+    errors = []
+
+    for i, row in enumerate(rows):
+        sid = str(row.get("id", "")).strip()
+        name = str(row.get("name", "")).strip()
+        if not sid or not name:
+            errors.append(f"Row {i+1}: missing id or name")
+            continue
+        if sid in current_ids:
+            skipped += 1
+            continue
+        hrs = int(row.get("hoursPerDay", 7)) if str(row.get("hoursPerDay", 7)).isdigit() else 7
+        ot = int(row.get("overtimeLimit", 30)) if str(row.get("overtimeLimit", 30)).isdigit() else 30
+        new_staff = migrate_staff({
+            "id": sid, "name": name,
+            "hoursPerDay": hrs,
+            "overtimeLimit": ot,
+            "activities": [],
+            "versatility": 0
+        })
+        data["staff"].append(new_staff)
+        current_ids.add(sid)
+        added += 1
+
+    save_data(data)
+    return {
+        "message": f"Bulk import complete: {added} added, {skipped} skipped, {len(errors)} errors",
+        "added": added, "skipped": skipped, "errors": errors,
+        "totalStaff": len(data["staff"]),
+        "importedAt": adelaide_now()
+    }
 
 # ---------------------------------------------------------------------------
 # Cycles
@@ -596,6 +964,7 @@ def create_cycle(payload: dict):
         "endDate": payload.get("endDate"),
         "weeks": payload.get("weeks", []),
         "status": "draft",
+        "activationDate": payload.get("activationDate"),  # date when cycle can activate
         "createdAt": adelaide_now(),
         "activatedAt": None,
         "completedAt": None
@@ -607,8 +976,24 @@ def create_cycle(payload: dict):
 @app.post("/cycles/{cycle_id}/activate")
 def activate_cycle(cycle_id: str):
     data = load_data()
+    now = datetime.now(ADELAIDE_TZ)
     for c in data["cycles"]:
         if c["id"] == cycle_id:
+            # Check activation date lock
+            activation_date = c.get("activationDate")
+            if activation_date:
+                try:
+                    act_dt = datetime.fromisoformat(activation_date)
+                    if act_dt.tzinfo is None:
+                        act_dt = act_dt.replace(tzinfo=ADELAIDE_TZ)
+                    if now < act_dt:
+                        return {
+                            "error": "Cannot activate yet",
+                            "message": f"This cycle is locked until {activation_date}",
+                            "activationDate": activation_date
+                        }
+                except Exception:
+                    pass
             c["status"] = "active"
             c["activatedAt"] = adelaide_now()
             data["activeCycleId"] = cycle_id
@@ -626,7 +1011,7 @@ def complete_cycle(cycle_id: str):
     return {"message": "Cycle completed"}
 
 @app.post("/cycles/{cycle_id}/carryforward")
-def carry_forward_cycle(cycle_id: str):
+def carry_forward_cycle(cycle_id: str, payload: dict = {}):
     import copy
     data = load_data()
     source = next((c for c in data["cycles"] if c["id"] == cycle_id), None)
@@ -634,8 +1019,9 @@ def carry_forward_cycle(cycle_id: str):
         return {"error": "Cycle not found"}
     new_cycle = copy.deepcopy(source)
     new_cycle["id"] = f"cycle_{int(datetime.now().timestamp())}"
-    new_cycle["name"] = f"{source['name']} (Copy)"
+    new_cycle["name"] = payload.get("name", f"{source['name']} (Copy)")
     new_cycle["status"] = "draft"
+    new_cycle["activationDate"] = payload.get("activationDate")
     new_cycle["createdAt"] = adelaide_now()
     new_cycle["activatedAt"] = None
     new_cycle["completedAt"] = None
@@ -679,12 +1065,15 @@ def calculate_overtime(payload: dict):
         for s in staff:
             s["_v"] = calc_versatility_full(s, activities, gh_names, all_crops)
         availability = build_staff_availability(staff, absences, active_days)
+        # Calculate regular hours used this week per staff
         assigned_hours = {s["id"]: 0.0 for s in staff}
         for day, assignments in schedule.items():
             for a in assignments:
                 sid = a.get("staffId")
                 if sid and sid != "UNASSIGNED":
                     assigned_hours[sid] = assigned_hours.get(sid, 0) + a.get("hours", 0)
+        # Check regular capacity — OT only beyond normal capacity
+        regular_capacity = {s["id"]: sum(availability[s["id"]][d] for d in active_days) for s in staff}
         unassigned_tasks = [
             {**a, "day": day}
             for day, assignments in schedule.items()
@@ -692,10 +1081,11 @@ def calculate_overtime(payload: dict):
         ]
         if not unassigned_tasks:
             return {"entries": [], "message": "No unassigned hours — no overtime needed"}
+
         def sort_key(s):
             sid = s["id"]
-            capacity = sum(availability[sid][d] for d in active_days)
-            utilisation = assigned_hours.get(sid, 0) / capacity if capacity > 0 else 1
+            cap = regular_capacity.get(sid, 1)
+            utilisation = assigned_hours.get(sid, 0) / cap if cap > 0 else 1
             return (utilisation, -s["_v"])
         staff_sorted = sorted(staff, key=sort_key)
         ot_hours_used = {s["id"]: 0.0 for s in staff}
@@ -707,6 +1097,8 @@ def calculate_overtime(payload: dict):
             hours_needed = task["hours"]
             gh_obj = gh_lookup.get(gh, {})
             gh_crops = gh_obj.get("cropTypes", [])
+            if task.get("cropType"):
+                gh_crops = [task["cropType"]]
             remaining = hours_needed
             for s in staff_sorted:
                 if remaining <= 0:
@@ -736,12 +1128,31 @@ def calculate_overtime(payload: dict):
         return {"error": str(e), "trace": traceback.format_exc()}
 
 # ---------------------------------------------------------------------------
-# Quarantine routes
+# Quarantine routes — with extend + history
 # ---------------------------------------------------------------------------
 @app.get("/quarantine")
 def get_quarantine():
     data = load_data()
-    return {"quarantine": data.get("quarantine", [])}
+    now = datetime.now(ADELAIDE_TZ)
+    active = []
+    expired = []
+    for event in data.get("quarantine", []):
+        try:
+            start = datetime.fromisoformat(event["startDate"].replace("Z", "+00:00"))
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=ADELAIDE_TZ)
+            total_days = event.get("daysLocked", 7) + event.get("extensionDays", 0)
+            end = start + timedelta(days=total_days)
+            if now <= end:
+                active.append(event)
+            else:
+                expired.append(event)
+        except Exception:
+            active.append(event)
+    return {
+        "quarantine": active,
+        "quarantineHistory": expired + data.get("quarantineHistory", [])
+    }
 
 @app.post("/quarantine")
 def create_quarantine(payload: dict):
@@ -752,8 +1163,10 @@ def create_quarantine(payload: dict):
         "staffIds": payload.get("staffIds", []),
         "allowedGreenhouses": payload.get("allowedGreenhouses", []),
         "daysLocked": payload.get("daysLocked", 7),
+        "extensionDays": 0,
         "startDate": payload.get("startDate", adelaide_now()),
         "reason": payload.get("reason", ""),
+        "quarantineType": payload.get("quarantineType", "A"),
         "createdBy": payload.get("createdBy", "GM"),
         "createdAt": adelaide_now()
     }
@@ -768,6 +1181,19 @@ def delete_quarantine(event_id: str):
     save_data(data)
     return {"message": "Quarantine event removed"}
 
+@app.post("/quarantine/{event_id}/extend")
+def extend_quarantine(event_id: str, payload: dict):
+    """Extend a quarantine order by additional days."""
+    data = load_data()
+    extra = payload.get("additionalDays", 0)
+    for e in data.get("quarantine", []):
+        if e["id"] == event_id:
+            e["extensionDays"] = e.get("extensionDays", 0) + extra
+            e["lastExtendedAt"] = adelaide_now()
+            e["lastExtendedBy"] = "GM"
+    save_data(data)
+    return {"message": f"Quarantine extended by {extra} days", "updatedAt": adelaide_now()}
+
 @app.put("/quarantine/{event_id}")
 def update_quarantine(event_id: str, payload: dict):
     data = load_data()
@@ -777,6 +1203,24 @@ def update_quarantine(event_id: str, payload: dict):
             e["updatedAt"] = adelaide_now()
     save_data(data)
     return {"message": "Quarantine event updated"}
+
+# ---------------------------------------------------------------------------
+# Cluster transitions UI
+# ---------------------------------------------------------------------------
+@app.get("/cluster-transitions")
+def get_cluster_transitions():
+    data = load_data()
+    return {
+        "clusters": data.get("clusters", []),
+        "clusterTransitions": data.get("clusterTransitions", {})
+    }
+
+@app.post("/cluster-transitions")
+def save_cluster_transitions(payload: dict):
+    data = load_data()
+    data["clusterTransitions"] = payload.get("clusterTransitions", {})
+    save_data(data)
+    return {"message": "Cluster transitions saved", "savedAt": adelaide_now()}
 
 # ---------------------------------------------------------------------------
 # Migration endpoint
