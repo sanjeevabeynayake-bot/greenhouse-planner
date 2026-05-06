@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import json
 import os
+import httpx
 from datetime import datetime, timezone, timedelta
 
 app = FastAPI()
@@ -13,9 +14,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DATA_FILE = "data.json"
 ALL_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 ADELAIDE_TZ = timezone(timedelta(hours=9, minutes=30))
+
+# Supabase config — set these in Render environment variables
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+SUPABASE_HEADERS = {
+    "apikey": SUPABASE_KEY,
+    "Authorization": f"Bearer {SUPABASE_KEY}",
+    "Content-Type": "application/json",
+    "Prefer": "return=minimal"
+}
+DATA_KEY = "greenhouse_data"
 
 def adelaide_now():
     return datetime.now(ADELAIDE_TZ).isoformat()
@@ -44,21 +55,41 @@ def default_data():
     }
 
 def load_data():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as f:
-            raw = json.load(f)
-        defaults = default_data()
-        for key, val in defaults.items():
-            if key not in raw:
-                raw[key] = val
-        raw["staff"] = [migrate_staff(s) for s in raw.get("staff", [])]
-        raw["greenhouses"] = [normalise_gh(g) for g in raw.get("greenhouses", [])]
-        return raw
+    try:
+        resp = httpx.get(
+            f"{SUPABASE_URL}/rest/v1/app_data?key=eq.{DATA_KEY}&select=value",
+            headers=SUPABASE_HEADERS,
+            timeout=10
+        )
+        rows = resp.json()
+        if rows and len(rows) > 0 and rows[0].get("value"):
+            raw = rows[0]["value"]
+            if isinstance(raw, str):
+                raw = json.loads(raw)
+            defaults = default_data()
+            for key, val in defaults.items():
+                if key not in raw:
+                    raw[key] = val
+            raw["staff"] = [migrate_staff(s) for s in raw.get("staff", [])]
+            raw["greenhouses"] = [normalise_gh(g) for g in raw.get("greenhouses", [])]
+            return raw
+    except Exception as e:
+        print(f"Supabase load error: {e}")
     return default_data()
 
 def save_data(data):
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+    try:
+        # Upsert into Supabase
+        resp = httpx.post(
+            f"{SUPABASE_URL}/rest/v1/app_data",
+            headers={**SUPABASE_HEADERS, "Prefer": "resolution=merge-duplicates,return=minimal"},
+            json={"key": DATA_KEY, "value": data, "updated_at": adelaide_now()},
+            timeout=15
+        )
+        if resp.status_code not in (200, 201, 204):
+            print(f"Supabase save error: {resp.status_code} {resp.text}")
+    except Exception as e:
+        print(f"Supabase save exception: {e}")
 
 # ---------------------------------------------------------------------------
 # Migration: old flat staff model -> new activity-scoped model
