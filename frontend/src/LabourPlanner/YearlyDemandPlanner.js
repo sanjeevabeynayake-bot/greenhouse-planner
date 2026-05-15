@@ -481,7 +481,38 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinatio
       for (const [act, cells] of Object.entries(p.grid?.activities || {})) {
         acts[act] = (cells || []).map(c => ({ ...c, manualHours: null, isManual: false }));
       }
-      return { ...p, grid: { ...p.grid, activities: acts }, sqmOverride: null };
+      const pickingCells = (p.grid?.pickingCells || []).map(c => ({ ...c, manualHours: null, isManual: false }));
+      const pollinationCells = (p.grid?.pollinationCells || []).map(c => ({ ...c, manualHours: null, isManual: false }));
+      return { ...p, grid: { ...p.grid, activities: acts, pickingCells, pollinationCells }, sqmOverride: null };
+    }));
+  };
+
+  const handlePickingEdit = (wi, val) => {
+    setPlans(prev => prev.map(p => {
+      if (p.id !== plan.id) return p;
+      const pickingCells = [...(p.grid?.pickingCells || [])];
+      pickingCells[wi] = { ...(pickingCells[wi] || {}), manualHours: val, isManual: true };
+      return { ...p, grid: { ...p.grid, pickingCells } };
+    }));
+  };
+
+  const handlePollinationEdit = (wi, val) => {
+    setPlans(prev => prev.map(p => {
+      if (p.id !== plan.id) return p;
+      const pollinationCells = [...(p.grid?.pollinationCells || [])];
+      pollinationCells[wi] = { ...(pollinationCells[wi] || {}), manualHours: val, isManual: true };
+      return { ...p, grid: { ...p.grid, pollinationCells } };
+    }));
+  };
+
+  const handleResetSpecialCell = (type, wi) => {
+    setContextMenu(null);
+    setPlans(prev => prev.map(p => {
+      if (p.id !== plan.id) return p;
+      const key = type === "picking" ? "pickingCells" : "pollinationCells";
+      const cells = [...(p.grid?.[key] || [])];
+      cells[wi] = { ...(cells[wi] || {}), manualHours: null, isManual: false };
+      return { ...p, grid: { ...p.grid, [key]: cells } };
     }));
   };
 
@@ -517,8 +548,10 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinatio
   const getDynamicTotal = (wi) => {
     let total = 0;
     for (const act of regularActs) total += getEffectiveHours(act, wi);
-    total += plan.grid?.pickingCells?.[wi]?.hours || 0;
-    total += plan.grid?.pollinationCells?.[wi]?.hours || 0;
+    const pickCell = plan.grid?.pickingCells?.[wi];
+    total += pickCell?.isManual ? (parseFloat(pickCell.manualHours) || 0) : (pickCell?.hours || 0);
+    const pollCell = plan.grid?.pollinationCells?.[wi];
+    total += pollCell?.isManual ? (parseFloat(pollCell.manualHours) || 0) : (pollCell?.hours || 0);
     return total;
   };
 
@@ -583,8 +616,9 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinatio
           style={{ ...lpBtn(false, LP.mid), padding: "8px 16px", minHeight: 44 }}>
           ↻ Recalculate
         </button>
-        <button onClick={doPopulate}
-          style={{ ...lpBtn(true, LP.light), padding: "8px 18px", minHeight: 44 }}>
+        <button disabled
+          title="Coming soon — Weekly Scheduler not yet connected"
+          style={{ ...lpBtn(false, LP.mid), padding: "8px 18px", minHeight: 44, opacity: 0.38, cursor: "not-allowed" }}>
           ▶ Populate to Scheduler
         </button>
       </div>
@@ -683,7 +717,7 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinatio
                         style={{ ...dataC(cellBg, color), position: "relative" }}
                         onContextMenu={isManual ? (e) => {
                           e.preventDefault();
-                          setContextMenu({ act, wi, x: e.clientX, y: e.clientY });
+                          setContextMenu({ type: "activity", act, wi, x: e.clientX, y: e.clientY });
                         } : undefined}
                       >
                         {ticked ? (
@@ -710,39 +744,75 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinatio
               );
             })}
 
-            {/* Picking row — read-only calculated */}
+            {/* Picking row — editable */}
             <tr>
               <td style={{ ...stickyLbl(LP.amberLight, LP.amber, `2px solid ${LP.amber}`), borderLeft: `4px solid ${LP.amber}` }}>
                 ★ Picking
               </td>
               {Array.from({ length: plan.cycleWeeks }, (_, wi) => {
-                const hours = plan.grid?.pickingCells?.[wi]?.hours;
+                const cell = plan.grid?.pickingCells?.[wi];
+                const hours = cell?.hours;
+                const isManual = cell?.isManual ?? false;
+                const cellBg = isManual ? "#ffffff" : (hours != null ? LP.amberLight : "#f0f0f0");
+                const color = isManual ? LP.forest : (hours != null ? LP.amber : LP.textLight);
                 return (
-                  <td key={wi} style={{ ...dataC(
-                    hours != null ? LP.amberLight : "#f0f0f0",
-                    hours != null ? LP.amber : LP.textLight,
-                    `2px solid ${LP.amber}`
-                  ), padding: "0 6px" }}>
-                    {hours != null ? hours.toFixed(1) : "–"}
+                  <td key={wi}
+                    style={{ ...dataC(cellBg, color, `2px solid ${LP.amber}`), position: "relative" }}
+                    onContextMenu={isManual ? (e) => {
+                      e.preventDefault();
+                      setContextMenu({ type: "picking", wi, x: e.clientX, y: e.clientY });
+                    } : undefined}
+                  >
+                    <div style={{ display: "flex", flexDirection: "column" }}>
+                      <input
+                        type="number" min="0"
+                        value={isManual ? (cell.manualHours ?? "") : (hours != null ? hours.toFixed(1) : "")}
+                        onChange={e => handlePickingEdit(wi, e.target.value)}
+                        style={{ ...inpStyle, fontWeight: isManual ? 700 : 400 }}
+                      />
+                      {isManual && hours != null && (
+                        <div style={{ fontSize: 9, color: LP.textLight, textAlign: "right", paddingRight: 6, lineHeight: 1, marginTop: -1 }}>
+                          {hours.toFixed(1)}
+                        </div>
+                      )}
+                    </div>
                   </td>
                 );
               })}
             </tr>
 
-            {/* Pollination row — read-only calculated */}
+            {/* Pollination row — editable */}
             <tr>
               <td style={{ ...stickyLbl(LP.amberLight, LP.amber, `2px solid ${LP.amber}`), borderLeft: `4px solid ${LP.amber}` }}>
                 ★ Pollination
               </td>
               {Array.from({ length: plan.cycleWeeks }, (_, wi) => {
-                const hours = plan.grid?.pollinationCells?.[wi]?.hours;
+                const cell = plan.grid?.pollinationCells?.[wi];
+                const hours = cell?.hours;
+                const isManual = cell?.isManual ?? false;
+                const cellBg = isManual ? "#ffffff" : (hours != null ? LP.amberLight : "#f0f0f0");
+                const color = isManual ? LP.forest : (hours != null ? LP.amber : LP.textLight);
                 return (
-                  <td key={wi} style={{ ...dataC(
-                    hours != null ? LP.amberLight : "#f0f0f0",
-                    hours != null ? LP.amber : LP.textLight,
-                    `2px solid ${LP.amber}`
-                  ), padding: "0 6px" }}>
-                    {hours != null ? hours.toFixed(1) : "–"}
+                  <td key={wi}
+                    style={{ ...dataC(cellBg, color, `2px solid ${LP.amber}`), position: "relative" }}
+                    onContextMenu={isManual ? (e) => {
+                      e.preventDefault();
+                      setContextMenu({ type: "pollination", wi, x: e.clientX, y: e.clientY });
+                    } : undefined}
+                  >
+                    <div style={{ display: "flex", flexDirection: "column" }}>
+                      <input
+                        type="number" min="0"
+                        value={isManual ? (cell.manualHours ?? "") : (hours != null ? hours.toFixed(1) : "")}
+                        onChange={e => handlePollinationEdit(wi, e.target.value)}
+                        style={{ ...inpStyle, fontWeight: isManual ? 700 : 400 }}
+                      />
+                      {isManual && hours != null && (
+                        <div style={{ fontSize: 9, color: LP.textLight, textAlign: "right", paddingRight: 6, lineHeight: 1, marginTop: -1 }}>
+                          {hours.toFixed(1)}
+                        </div>
+                      )}
+                    </div>
                   </td>
                 );
               })}
@@ -781,7 +851,10 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinatio
         }}
           onMouseLeave={() => setContextMenu(null)}>
           <button
-            onClick={() => handleResetCell(contextMenu.act, contextMenu.wi)}
+            onClick={() => {
+              if (contextMenu.type === "activity") handleResetCell(contextMenu.act, contextMenu.wi);
+              else handleResetSpecialCell(contextMenu.type, contextMenu.wi);
+            }}
             style={{ display: "block", width: "100%", padding: "9px 16px", background: "none", border: "none", cursor: "pointer", textAlign: "left", fontSize: 13, color: LP.textDark, fontFamily: "inherit" }}>
             ↺ Reset cell
           </button>
