@@ -52,10 +52,13 @@ function buildGrid(planData, { cropCycles, cropMasterData, greenhouses, pollinat
   const pickData = (pickingData || []).find(d => d.cropId === planData.cropId);
 
   const masterDensity = parseFloat(masterData?.density) || 0;
-  const sqm = parseFloat(
+  const rawSqm = parseFloat(
     planData.zone === "A" ? gh?.zoneA?.sqm :
     planData.zone === "B" ? gh?.zoneB?.sqm : gh?.sqm
   ) || 0;
+  const sqm = (planData.sqmOverride != null && planData.sqmOverride !== "")
+    ? (parseFloat(planData.sqmOverride) || rawSqm)
+    : rawSqm;
 
   const N = planData.cycleWeeks;
 
@@ -415,33 +418,26 @@ function CreatePlanForm({ gh, zone, plans, cropCycles, onCreated, onCancel }) {
 // ─── Plan View ────────────────────────────────────────────────────
 function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinationData, pickingData, setPlans, today }) {
   const masterData = cropMasterData.find(d => d.cropId === plan.cropId);
+  const [contextMenu, setContextMenu] = useState(null);
 
-  const pos = planPosition(plan, today);
-  const status = pos === "past" ? "past" : "draft";
-  const isLocked = status === "past";
-
-  const sqm = plan.zone === "A" ? (gh?.zoneA?.sqm || "")
+  const sqmFromGH = plan.zone === "A" ? (gh?.zoneA?.sqm || "")
     : plan.zone === "B" ? (gh?.zoneB?.sqm || "")
     : (gh?.sqm || "");
+  const effectiveSqm = (plan.sqmOverride != null && plan.sqmOverride !== "") ? String(plan.sqmOverride) : sqmFromGH;
   const zoneLbl = plan.zone === "A" ? " — Zone A" : plan.zone === "B" ? " — Zone B" : "";
 
-  const canPopulate = !isLocked;
-
-  // Warnings
   const crop = cropCycles.find(c => c.id === plan.cropId);
   const warnings = [];
-  if (!sqm) warnings.push("Greenhouse sq metres not set — configure in Greenhouse Master");
+  if (!effectiveSqm) warnings.push("Greenhouse sq metres not set — configure in Greenhouse Master");
   if (!masterData?.density) warnings.push(`${plan.cropName} density not set — configure in Crop Master`);
   if (crop && Object.keys(crop.matrix || {}).length === 0)
     warnings.push(`${plan.cropName} has no ticked activities in Crop Cycle Master`);
 
-  // Week column headers
   const weekHeaders = Array.from({ length: plan.cycleWeeks }, (_, i) => ({
     label: `W${i + 1}`,
     date: addDays(parseDate(plan.startDate), i * 7),
   }));
 
-  // Density per week: grid snapshot → Crop Master per-week → Crop Master scalar
   const masterDensityStr = masterData?.density || "";
   const densityVals = Array.from({ length: plan.cycleWeeks }, (_, i) => {
     if (plan.grid?.densityWeeks?.[i] != null) return plan.grid.densityWeeks[i];
@@ -451,6 +447,43 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinatio
   });
 
   const regularActs = (activities || []).filter(a => !SPECIAL_ACTS.includes(a));
+
+  // ── Handlers ──
+  const handleCellEdit = (act, wi, val) => {
+    setPlans(prev => prev.map(p => {
+      if (p.id !== plan.id) return p;
+      const acts = { ...(p.grid?.activities || {}) };
+      const row = [...(acts[act] || [])];
+      row[wi] = { ...(row[wi] || {}), manualHours: val, isManual: true };
+      return { ...p, grid: { ...p.grid, activities: { ...acts, [act]: row } } };
+    }));
+  };
+
+  const handleSqmEdit = (val) => {
+    setPlans(prev => prev.map(p => p.id === plan.id ? { ...p, sqmOverride: val } : p));
+  };
+
+  const handleResetCell = (act, wi) => {
+    setContextMenu(null);
+    setPlans(prev => prev.map(p => {
+      if (p.id !== plan.id) return p;
+      const acts = { ...(p.grid?.activities || {}) };
+      const row = [...(acts[act] || [])];
+      row[wi] = { ...(row[wi] || {}), manualHours: null, isManual: false };
+      return { ...p, grid: { ...p.grid, activities: { ...acts, [act]: row } } };
+    }));
+  };
+
+  const handleResetAll = () => {
+    setPlans(prev => prev.map(p => {
+      if (p.id !== plan.id) return p;
+      const acts = {};
+      for (const [act, cells] of Object.entries(p.grid?.activities || {})) {
+        acts[act] = (cells || []).map(c => ({ ...c, manualHours: null, isManual: false }));
+      }
+      return { ...p, grid: { ...p.grid, activities: acts }, sqmOverride: null };
+    }));
+  };
 
   const doRecalculate = () => {
     const newGrid = buildGrid(plan, {
@@ -471,6 +504,22 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinatio
       ...p, grid: newGrid, sentToScheduler: true,
       auditLog: [...(p.auditLog || []), { action: "populated", at: new Date().toISOString() }],
     } : p));
+  };
+
+  // Dynamic totals — respects manual overrides
+  const getEffectiveHours = (act, wi) => {
+    const cell = plan.grid?.activities?.[act]?.[wi];
+    if (!cell?.ticked) return 0;
+    if (cell?.isManual) return parseFloat(cell.manualHours) || 0;
+    return cell?.hours || 0;
+  };
+
+  const getDynamicTotal = (wi) => {
+    let total = 0;
+    for (const act of regularActs) total += getEffectiveHours(act, wi);
+    total += plan.grid?.pickingCells?.[wi]?.hours || 0;
+    total += plan.grid?.pollinationCells?.[wi]?.hours || 0;
+    return total;
   };
 
   // Shared style helpers
@@ -501,11 +550,20 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinatio
     background: bg, color,
     borderLeft: "1px solid rgba(0,0,0,0.05)",
     borderBottom: bb || `1px solid ${LP.borderLight}`,
-    fontSize: 11, padding: "2px 4px",
+    fontSize: 11, padding: 0,
   });
 
+  const inpStyle = {
+    width: "100%", border: "none", background: "transparent",
+    textAlign: "right", padding: "2px 6px",
+    color: "inherit", fontFamily: "inherit", fontSize: "inherit",
+    fontWeight: "inherit", outline: "none", cursor: "text",
+    boxSizing: "border-box", display: "block",
+  };
+
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}
+      onClick={() => contextMenu && setContextMenu(null)}>
 
       {/* Header */}
       <div style={{ padding: "13px 20px", background: LP.white, borderBottom: `1px solid ${LP.border}`, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
@@ -517,27 +575,18 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinatio
             {fmtDate(parseDate(plan.startDate))} → {fmtDate(planEnd(plan))} · {plan.cycleWeeks} weeks
           </div>
         </div>
-        <StatusBadge status={status} />
-
-        {plan.sentToScheduler && (
-          <div style={{ fontSize: 11, color: LP.mid, fontWeight: 600 }}>✓ Sent to scheduler</div>
-        )}
-
-        {!isLocked && (
-          <>
-            <button onClick={doRecalculate}
-              style={{ ...lpBtn(false, LP.mid), padding: "8px 16px", minHeight: 44 }}>
-              ↻ Recalculate
-            </button>
-            <button onClick={doPopulate}
-              style={{ ...lpBtn(true, LP.light), padding: "8px 18px", minHeight: 44 }}>
-              {plan.sentToScheduler ? "↺ Re-populate to Scheduler" : "▶ Populate to Scheduler"}
-            </button>
-          </>
-        )}
-        {status === "past" && (
-          <div style={{ fontSize: 12, color: LP.textLight, fontStyle: "italic" }}>Historical record</div>
-        )}
+        <button onClick={handleResetAll}
+          style={{ ...lpBtn(false, LP.mid), padding: "8px 16px", minHeight: 44 }}>
+          ↺ Reset all
+        </button>
+        <button onClick={doRecalculate}
+          style={{ ...lpBtn(false, LP.mid), padding: "8px 16px", minHeight: 44 }}>
+          ↻ Recalculate
+        </button>
+        <button onClick={doPopulate}
+          style={{ ...lpBtn(true, LP.light), padding: "8px 18px", minHeight: 44 }}>
+          ▶ Populate to Scheduler
+        </button>
       </div>
 
       {/* Warning banner */}
@@ -576,31 +625,38 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinatio
           </thead>
           <tbody>
 
-            {/* Density row */}
+            {/* Density row — read-only display */}
             <tr>
               <td style={stickyLbl("#fff8e7", LP.amber, `2px solid ${LP.amber}`)}>
                 Density (pl/m²)
               </td>
               {densityVals.map((d, i) => (
-                <td key={i} style={{ ...dataC("#fff8e7", LP.amber, `2px solid ${LP.amber}`), fontWeight: 600 }}>
+                <td key={i} style={{ ...dataC("#fff8e7", LP.amber, `2px solid ${LP.amber}`), fontWeight: 600, padding: "0 6px" }}>
                   {d || "–"}
                 </td>
               ))}
             </tr>
 
-            {/* Sq metres row */}
+            {/* Sq metres row — editable, plan-level override */}
             <tr>
               <td style={stickyLbl("#F0F4F0", LP.textMid)}>
                 Sq Metres (m²)
               </td>
-              {Array.from({ length: plan.cycleWeeks }, (_, i) => (
-                <td key={i} style={dataC("#F0F4F0", LP.textMid)}>
-                  {sqm || "–"}
-                </td>
-              ))}
+              {Array.from({ length: plan.cycleWeeks }, (_, i) => {
+                const isOverridden = plan.sqmOverride != null && plan.sqmOverride !== "";
+                return (
+                  <td key={i} style={dataC(isOverridden ? "#ffffff" : "#F0F4F0", LP.textMid)}>
+                    <input type="number" min="0"
+                      value={effectiveSqm}
+                      onChange={e => handleSqmEdit(e.target.value)}
+                      style={{ ...inpStyle, textAlign: "center", fontWeight: isOverridden ? 700 : 400 }}
+                    />
+                  </td>
+                );
+              })}
             </tr>
 
-            {/* Regular activity rows */}
+            {/* Regular activity rows — editable */}
             {regularActs.map((act, ai) => {
               const cells = plan.grid?.activities?.[act];
               const rowBg = ai % 2 === 0 ? LP.white : "#F5F8F5";
@@ -613,11 +669,40 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinatio
                     const cell = cells?.[wi];
                     const ticked = cell?.ticked ?? false;
                     const hours = cell?.hours;
-                    const bg = ticked ? (hours != null ? "#d8f3dc" : LP.amberLight) : "#f0f0f0";
-                    const color = ticked ? (hours != null ? LP.forest : LP.amber) : LP.textLight;
+                    const isManual = cell?.isManual ?? false;
+                    const cellBg = !ticked ? "#f0f0f0"
+                      : isManual ? "#ffffff"
+                      : hours != null ? "#d8f3dc"
+                      : LP.amberLight;
+                    const color = !ticked ? LP.textLight
+                      : isManual ? LP.forest
+                      : hours != null ? LP.forest
+                      : LP.amber;
                     return (
-                      <td key={wi} style={dataC(bg, color)}>
-                        {ticked ? (hours != null ? hours.toFixed(1) : "?") : "–"}
+                      <td key={wi}
+                        style={{ ...dataC(cellBg, color), position: "relative" }}
+                        onContextMenu={isManual ? (e) => {
+                          e.preventDefault();
+                          setContextMenu({ act, wi, x: e.clientX, y: e.clientY });
+                        } : undefined}
+                      >
+                        {ticked ? (
+                          <div style={{ display: "flex", flexDirection: "column" }}>
+                            <input
+                              type="number" min="0"
+                              value={isManual ? (cell.manualHours ?? "") : (hours != null ? hours.toFixed(1) : "")}
+                              onChange={e => handleCellEdit(act, wi, e.target.value)}
+                              style={{ ...inpStyle, fontWeight: isManual ? 700 : 400 }}
+                            />
+                            {isManual && hours != null && (
+                              <div style={{ fontSize: 9, color: LP.textLight, textAlign: "right", paddingRight: 6, lineHeight: 1, marginTop: -1 }}>
+                                {hours.toFixed(1)}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <span style={{ padding: "0 6px" }}>–</span>
+                        )}
                       </td>
                     );
                   })}
@@ -625,7 +710,7 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinatio
               );
             })}
 
-            {/* Picking row */}
+            {/* Picking row — read-only calculated */}
             <tr>
               <td style={{ ...stickyLbl(LP.amberLight, LP.amber, `2px solid ${LP.amber}`), borderLeft: `4px solid ${LP.amber}` }}>
                 ★ Picking
@@ -633,18 +718,18 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinatio
               {Array.from({ length: plan.cycleWeeks }, (_, wi) => {
                 const hours = plan.grid?.pickingCells?.[wi]?.hours;
                 return (
-                  <td key={wi} style={dataC(
+                  <td key={wi} style={{ ...dataC(
                     hours != null ? LP.amberLight : "#f0f0f0",
                     hours != null ? LP.amber : LP.textLight,
                     `2px solid ${LP.amber}`
-                  )}>
+                  ), padding: "0 6px" }}>
                     {hours != null ? hours.toFixed(1) : "–"}
                   </td>
                 );
               })}
             </tr>
 
-            {/* Pollination row */}
+            {/* Pollination row — read-only calculated */}
             <tr>
               <td style={{ ...stickyLbl(LP.amberLight, LP.amber, `2px solid ${LP.amber}`), borderLeft: `4px solid ${LP.amber}` }}>
                 ★ Pollination
@@ -652,28 +737,28 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinatio
               {Array.from({ length: plan.cycleWeeks }, (_, wi) => {
                 const hours = plan.grid?.pollinationCells?.[wi]?.hours;
                 return (
-                  <td key={wi} style={dataC(
+                  <td key={wi} style={{ ...dataC(
                     hours != null ? LP.amberLight : "#f0f0f0",
                     hours != null ? LP.amber : LP.textLight,
                     `2px solid ${LP.amber}`
-                  )}>
+                  ), padding: "0 6px" }}>
                     {hours != null ? hours.toFixed(1) : "–"}
                   </td>
                 );
               })}
             </tr>
 
-            {/* Total row */}
+            {/* Total row — dynamic sum of manual + auto values */}
             <tr>
               <td style={{ ...stickyLbl(LP.forest, LP.white, `2px solid ${LP.mid}`), fontWeight: 800, fontSize: 12 }}>
                 Total hrs / week
               </td>
               {Array.from({ length: plan.cycleWeeks }, (_, wi) => {
-                const hrs = plan.grid?.totalHrsPerWeek?.[wi] ?? 0;
+                const hrs = getDynamicTotal(wi);
                 return (
                   <td key={wi} style={{
                     ...dataC(LP.forest, hrs > 0 ? LP.mint : "rgba(255,255,255,0.3)", `2px solid ${LP.mid}`),
-                    fontWeight: hrs > 0 ? 800 : 400, fontSize: 12,
+                    fontWeight: hrs > 0 ? 800 : 400, fontSize: 12, padding: "0 6px",
                   }}>
                     {hrs > 0 ? hrs.toFixed(1) : "–"}
                   </td>
@@ -684,6 +769,24 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinatio
           </tbody>
         </table>
       </div>
+
+      {/* Right-click context menu */}
+      {contextMenu && (
+        <div style={{
+          position: "fixed", zIndex: 1000,
+          left: contextMenu.x, top: contextMenu.y,
+          background: LP.white, border: `1px solid ${LP.border}`,
+          borderRadius: 6, boxShadow: "0 4px 16px rgba(0,0,0,0.15)",
+          padding: "4px 0", minWidth: 130,
+        }}
+          onMouseLeave={() => setContextMenu(null)}>
+          <button
+            onClick={() => handleResetCell(contextMenu.act, contextMenu.wi)}
+            style={{ display: "block", width: "100%", padding: "9px 16px", background: "none", border: "none", cursor: "pointer", textAlign: "left", fontSize: 13, color: LP.textDark, fontFamily: "inherit" }}>
+            ↺ Reset cell
+          </button>
+        </div>
+      )}
     </div>
   );
 }
