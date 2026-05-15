@@ -10,7 +10,7 @@ export const SEED_ACTIVITIES = [
   "Pollination", "Remove Bottom shoots", "Stem Supports", "Truss Supports",
   "Cleaning & Sanitation", "Truss Spike Removal", "Project Maintenance",
   "Fork Lift", "Truck Driver", "Chopper operator", "Aqua Jet operator",
-  "Fruit Cleaning", "Labor Team Leader", "Remove Weeds", "IPM / Growing",
+  "Fruit Cleaning", "Picking", "Labor Team Leader", "Remove Weeds", "IPM / Growing",
   "Regular Cleaning", "Hygiene station organizing", "Pre Ops Check", "Post Ops Check",
 ];
 

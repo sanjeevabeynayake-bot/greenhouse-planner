@@ -66,7 +66,8 @@ export default function App() {
   const [importPreview,setImportPreview]=useState(null);
   const [importData,setImportData]=useState(null);
   const [importMergeMode,setImportMergeMode]=useState("replace");
-  const [mainSection,setMainSection]=useState("weekly");
+  const [mainSection,setMainSection]=useState(null);
+  const [lpRole,setLpRole]=useState(null);
 
   useEffect(()=>{
     const tick=()=>setAdelaideTime(new Date().toLocaleString("en-AU",{timeZone:"Australia/Adelaide",weekday:"short",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:true}));
@@ -382,25 +383,72 @@ export default function App() {
     );
   }
 
-  if(!role)return(
+  const bgImg={position:"absolute",top:0,left:0,right:0,bottom:0,backgroundImage:"url('https://images.unsplash.com/photo-1416879595882-3373a0480b5b?w=1600')",backgroundSize:"cover",backgroundPosition:"center",filter:"brightness(0.3)"};
+  const backBtn={background:"rgba(255,255,255,0.1)",border:"1px solid rgba(255,255,255,0.2)",color:"rgba(255,255,255,0.7)",borderRadius:"8px",padding:"8px 16px",cursor:"pointer",fontSize:"13px",marginBottom:"28px"};
+
+  if(!mainSection)return(
     <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden"}}>
-      <div style={{position:"absolute",top:0,left:0,right:0,bottom:0,backgroundImage:"url('https://images.unsplash.com/photo-1416879595882-3373a0480b5b?w=1600')",backgroundSize:"cover",backgroundPosition:"center",filter:"brightness(0.3)"}}/>
-      <div style={{position:"absolute",top:0,left:0,right:0,bottom:0,background:"linear-gradient(135deg,rgba(26,58,92,0.8),rgba(13,115,119,0.6))"}}/>
-      <div style={{position:"relative",zIndex:1,textAlign:"center",padding:"20px",width:"100%",maxWidth:"540px"}}>
+      <div style={bgImg}/>
+      <div style={{position:"absolute",top:0,left:0,right:0,bottom:0,background:"linear-gradient(135deg,rgba(27,67,50,0.85),rgba(45,106,79,0.7))"}}/>
+      <div style={{position:"relative",zIndex:1,textAlign:"center",padding:"20px",width:"100%",maxWidth:"600px"}}>
         <div style={{fontSize:"60px",marginBottom:"10px"}}>🌿</div>
         <h1 style={{color:"white",marginBottom:"6px",fontSize:"30px",textShadow:"0 2px 12px rgba(0,0,0,0.6)"}}>Greenhouse Planner</h1>
         <p style={{color:"rgba(255,255,255,0.8)",marginBottom:"10px",fontSize:"14px"}}>Workforce Allocation & Scheduling System</p>
         <p style={{color:"rgba(255,255,255,0.5)",marginBottom:"36px",fontSize:"12px"}}>Adelaide Time: {adelaideTime}</p>
         <div style={{display:"flex",gap:"20px",justifyContent:"center"}}>
-          {[{role:"gm",icon:"👔",title:"General Manager",sub:"Full Access — All Tabs",color:"rgba(26,58,92,0.92)"},{role:"lm",icon:"👷",title:"Labour Manager",sub:"Staff & Operations",color:"rgba(13,115,119,0.92)"}].map(r=>(
-            <div key={r.role} onClick={()=>{setRole(r.role);setPage("dashboard");}} style={{background:r.color,backdropFilter:"blur(10px)",color:"white",padding:"36px 40px",borderRadius:"16px",cursor:"pointer",flex:1,border:"1px solid rgba(255,255,255,0.2)",boxShadow:"0 8px 32px rgba(0,0,0,0.3)"}}>
-              <div style={{fontSize:"42px",marginBottom:"14px"}}>{r.icon}</div>
-              <div style={{fontWeight:"700",fontSize:"17px"}}>{r.title}</div>
-              <div style={{fontSize:"12px",opacity:0.75,marginTop:"8px"}}>{r.sub}</div>
+          {[{id:"labour",icon:"📋",title:"Labour Planner",sub:"Crop cycles · Greenhouse setup · Demand planning"},{id:"weekly",icon:"📅",title:"Weekly Scheduler",sub:"Staff scheduling · Overtime · Absence management"}].map(m=>(
+            <div key={m.id} onClick={()=>{setMainSection(m.id);setRole(null);setLpRole(null);}} style={{background:"rgba(27,67,50,0.92)",backdropFilter:"blur(10px)",color:"white",padding:"36px 40px",borderRadius:"16px",cursor:"pointer",flex:1,border:"1px solid rgba(255,255,255,0.2)",boxShadow:"0 8px 32px rgba(0,0,0,0.3)"}}>
+              <div style={{fontSize:"42px",marginBottom:"14px"}}>{m.icon}</div>
+              <div style={{fontWeight:"700",fontSize:"17px"}}>{m.title}</div>
+              <div style={{fontSize:"12px",opacity:0.75,marginTop:"8px"}}>{m.sub}</div>
             </div>
           ))}
         </div>
-        <p style={{color:"rgba(255,255,255,0.4)",fontSize:"11px",marginTop:"30px"}}>Select your role to continue</p>
+        <p style={{color:"rgba(255,255,255,0.4)",fontSize:"11px",marginTop:"30px"}}>Select a module to continue</p>
+      </div>
+    </div>
+  );
+
+  if(mainSection==="labour"&&!lpRole)return(
+    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden"}}>
+      <div style={bgImg}/>
+      <div style={{position:"absolute",top:0,left:0,right:0,bottom:0,background:"linear-gradient(135deg,rgba(27,67,50,0.85),rgba(45,106,79,0.7))"}}/>
+      <div style={{position:"relative",zIndex:1,textAlign:"center",padding:"20px",width:"100%",maxWidth:"500px"}}>
+        <button onClick={()=>setMainSection(null)} style={backBtn}>← Back to modules</button>
+        <div style={{fontSize:"48px",marginBottom:"10px"}}>📋</div>
+        <h2 style={{color:"white",marginBottom:"6px",fontSize:"24px"}}>Labour Planner</h2>
+        <p style={{color:"rgba(255,255,255,0.6)",marginBottom:"36px",fontSize:"13px"}}>Select your role</p>
+        <div style={{display:"flex",gap:"20px",justifyContent:"center"}}>
+          {[{id:"gm",icon:"👔",title:"General Manager",sub:"Full access — all masters"},{id:"grower",icon:"🌱",title:"Grower",sub:"Read-only view"}].map(r=>(
+            <div key={r.id} onClick={()=>setLpRole(r.id)} style={{background:"rgba(27,67,50,0.92)",backdropFilter:"blur(10px)",color:"white",padding:"32px 36px",borderRadius:"16px",cursor:"pointer",flex:1,border:"1px solid rgba(255,255,255,0.2)",boxShadow:"0 8px 32px rgba(0,0,0,0.3)"}}>
+              <div style={{fontSize:"38px",marginBottom:"12px"}}>{r.icon}</div>
+              <div style={{fontWeight:"700",fontSize:"16px"}}>{r.title}</div>
+              <div style={{fontSize:"12px",opacity:0.75,marginTop:"6px"}}>{r.sub}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+
+  if(mainSection==="weekly"&&!role)return(
+    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden"}}>
+      <div style={bgImg}/>
+      <div style={{position:"absolute",top:0,left:0,right:0,bottom:0,background:"linear-gradient(135deg,rgba(26,58,92,0.85),rgba(13,115,119,0.7))"}}/>
+      <div style={{position:"relative",zIndex:1,textAlign:"center",padding:"20px",width:"100%",maxWidth:"640px"}}>
+        <button onClick={()=>setMainSection(null)} style={backBtn}>← Back to modules</button>
+        <div style={{fontSize:"48px",marginBottom:"10px"}}>📅</div>
+        <h2 style={{color:"white",marginBottom:"6px",fontSize:"24px"}}>Weekly Scheduler</h2>
+        <p style={{color:"rgba(255,255,255,0.6)",marginBottom:"36px",fontSize:"13px"}}>Select your role</p>
+        <div style={{display:"flex",gap:"16px",justifyContent:"center"}}>
+          {[{id:"gm",icon:"👔",title:"General Manager",sub:"Full Access — All Tabs",color:"rgba(26,58,92,0.92)"},{id:"lm",icon:"👷",title:"Labour Manager",sub:"Staff & Operations",color:"rgba(13,115,119,0.92)"},{id:"grower",icon:"🌱",title:"Grower",sub:"View schedules — Phase 4",color:"rgba(27,67,50,0.92)"}].map(r=>(
+            <div key={r.id} onClick={()=>{setRole(r.id);setPage("dashboard");}} style={{background:r.color,backdropFilter:"blur(10px)",color:"white",padding:"28px 24px",borderRadius:"16px",cursor:"pointer",flex:1,border:"1px solid rgba(255,255,255,0.2)",boxShadow:"0 8px 32px rgba(0,0,0,0.3)"}}>
+              <div style={{fontSize:"36px",marginBottom:"10px"}}>{r.icon}</div>
+              <div style={{fontWeight:"700",fontSize:"15px"}}>{r.title}</div>
+              <div style={{fontSize:"11px",opacity:0.75,marginTop:"6px"}}>{r.sub}</div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -451,10 +499,11 @@ export default function App() {
         <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:"10px",padding:"8px 0"}}>
           <span style={{color:"rgba(255,255,255,0.4)",fontSize:"11px"}}>{adelaideTime}</span>
           {efficiencyScore!=null&&role==="gm"&&<span style={{background:"rgba(46,204,113,0.2)",color:"#2ecc71",padding:"3px 10px",borderRadius:"12px",fontSize:"12px",fontWeight:"700",border:"1px solid rgba(46,204,113,0.4)"}}>📊 {efficiencyScore}%</span>}
-          <span style={{color:"#aed6f1",fontSize:"12px",borderLeft:"1px solid rgba(255,255,255,0.2)",paddingLeft:"10px"}}>{role==="gm"?"👔 General Manager":"👷 Labour Manager"}</span>
+          <span style={{color:"#aed6f1",fontSize:"12px",borderLeft:"1px solid rgba(255,255,255,0.2)",paddingLeft:"10px"}}>{mainSection==="labour"?(lpRole==="gm"?"👔 GM — Labour Planner":"🌱 Grower — Labour Planner"):(role==="gm"?"👔 General Manager":role==="lm"?"👷 Labour Manager":"🌱 Grower")}</span>
           <button onClick={saveData} style={{...btn(false,saved?"#27ae60":C.orange),fontSize:"12px"}}>{saved?"✓ Saved!":"💾 Save"}</button>
           <button onClick={exportBackup} style={{...btn(false,C.teal),fontSize:"12px"}}>📤 Export</button>
-          <button onClick={()=>{setRole(null);setPage("dashboard");}} style={{...btn(false,"#c0392b"),fontSize:"12px"}}>Exit</button>
+          <button onClick={()=>{if(mainSection==="labour"){setLpRole(null);}else{setRole(null);setPage("dashboard");}}} style={{...btn(false,"#c0392b"),fontSize:"12px"}}>⇦ Role</button>
+          <button onClick={()=>{setMainSection(null);setRole(null);setLpRole(null);setPage("dashboard");}} style={{...btn(false,"#7f8c8d"),fontSize:"12px"}}>⌂ Home</button>
         </div>
       </div>
 
@@ -470,7 +519,7 @@ export default function App() {
       )}
 
       <div style={{padding:"20px"}}>
-        {mainSection==="labour"&&<LabourPlanner role={role}/>}
+        {mainSection==="labour"&&<LabourPlanner lpRole={lpRole}/>}
         {mainSection==="weekly"&&<>
 
         {/* ══ DASHBOARD ══ */}

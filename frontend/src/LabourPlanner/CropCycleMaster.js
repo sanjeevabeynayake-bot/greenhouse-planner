@@ -10,6 +10,8 @@ export default function CropCycleMaster({ cropCycles, setCropCycles, activities,
   const [showAddAct, setShowAddAct] = useState(false);
   const [newActName, setNewActName] = useState("");
   const gridRef = useRef();
+  const [dragIdx, setDragIdx] = useState(null);
+  const [dragOverIdx, setDragOverIdx] = useState(null);
 
   const crop = cropCycles.find(c => c.id === selId);
   const isEditing = !!editModes[selId];
@@ -252,7 +254,7 @@ export default function CropCycleMaster({ cropCycles, setCropCycles, activities,
             ))}
             {isEditing ? (
               <span style={{ fontSize: 11, color: LP.mid, fontStyle: "italic", marginLeft: "auto" }}>
-                Click cell to toggle · Click activity name to toggle row · Click week number to toggle column
+                Drag ≡ to reorder · Click activity name to toggle row · Click week to toggle column
               </span>
             ) : (
               <span style={{ fontSize: 11, color: LP.amber, fontWeight: 600, marginLeft: "auto" }}>
@@ -309,7 +311,25 @@ export default function CropCycleMaster({ cropCycles, setCropCycles, activities,
                 {activities.map((act, ai) => {
                   const rowBg = ai % 2 === 0 ? LP.white : "#F2F7F3";
                   return (
-                    <tr key={act}>
+                    <tr key={act}
+                      draggable={isEditing}
+                      onDragStart={() => setDragIdx(ai)}
+                      onDragEnd={() => { setDragIdx(null); setDragOverIdx(null); }}
+                      onDragOver={(e) => { e.preventDefault(); setDragOverIdx(ai); }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        if (dragIdx === null || dragIdx === ai) { setDragIdx(null); setDragOverIdx(null); return; }
+                        const next = [...activities];
+                        const [rem] = next.splice(dragIdx, 1);
+                        next.splice(ai, 0, rem);
+                        setActivities(next);
+                        setDragIdx(null); setDragOverIdx(null);
+                      }}
+                      style={{
+                        opacity: dragIdx === ai ? 0.35 : 1,
+                        boxShadow: dragOverIdx === ai && dragIdx !== null && dragIdx !== ai ? `inset 0 2px 0 ${LP.amber}` : "none",
+                      }}
+                    >
                       <td
                         onClick={() => toggleRow(act)}
                         title={isEditing ? `Toggle all weeks for ${act}` : undefined}
@@ -320,12 +340,15 @@ export default function CropCycleMaster({ cropCycles, setCropCycles, activities,
                           borderRight: `2px solid ${LP.border}`,
                           borderBottom: `1px solid ${LP.borderLight}`,
                           height: 44, verticalAlign: "middle",
-                          cursor: isEditing ? "pointer" : "default",
+                          cursor: isEditing ? "grab" : "default",
                           whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
                           maxWidth: 195,
                           boxShadow: "2px 0 4px rgba(0,0,0,0.05)",
                           userSelect: "none",
                         }}>
+                        {isEditing && (
+                          <span style={{ display: "inline-block", marginRight: 7, color: "rgba(0,0,0,0.22)", fontSize: 14, userSelect: "none", fontWeight: 700 }}>≡</span>
+                        )}
                         {act}
                       </td>
                       {Array.from({ length: crop.weeks }, (_, wi) => {
