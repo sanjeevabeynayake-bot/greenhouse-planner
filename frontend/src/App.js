@@ -66,6 +66,7 @@ export default function App() {
   const [importMergeMode,setImportMergeMode]=useState("replace");
   const [mainSection,setMainSection]=useState(null);
   const [lpRole,setLpRole]=useState(null);
+  const [wsHolidays,setWsHolidays]=useState(()=>{try{return JSON.parse(localStorage.getItem("ws_holidays_v1"))||[];}catch{return [];}});
 
   useEffect(()=>{
     const tick=()=>setAdelaideTime(new Date().toLocaleString("en-AU",{timeZone:"Australia/Adelaide",weekday:"short",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:true}));
@@ -91,6 +92,8 @@ export default function App() {
       if(d.cycles?.length>0){setCycles(d.cycles);setActiveCycleId(d.activeCycleId||d.cycles[0]?.id);}
     }).catch(()=>{}).finally(()=>setLoading(false));
   },[]);
+
+  useEffect(()=>{localStorage.setItem("ws_holidays_v1",JSON.stringify(wsHolidays));},[wsHolidays]);
 
   const normaliseGH=(gh)=>{if(typeof gh==="string")return{id:gh,name:gh,cropTypes:[]};return{id:gh.id||gh.name||"",name:gh.name||gh.id||"",cropTypes:gh.cropTypes||[]};};
   const ghList=greenhouses.map(normaliseGH);
@@ -439,8 +442,8 @@ export default function App() {
         <h2 style={{color:"white",marginBottom:"6px",fontSize:"24px"}}>Weekly Scheduler</h2>
         <p style={{color:"rgba(255,255,255,0.6)",marginBottom:"36px",fontSize:"13px"}}>Select your role</p>
         <div style={{display:"flex",gap:"16px",justifyContent:"center"}}>
-          {[{id:"gm",icon:"👔",title:"General Manager",sub:"Full Access — All Tabs",color:"rgba(26,58,92,0.92)"},{id:"lm",icon:"👷",title:"Labour Manager",sub:"Staff & Operations",color:"rgba(13,115,119,0.92)"},{id:"grower",icon:"🌱",title:"Grower",sub:"View schedules — Phase 4",color:"rgba(27,67,50,0.92)"}].map(r=>(
-            <div key={r.id} onClick={()=>{setRole(r.id);setPage("dashboard");}} style={{background:r.color,backdropFilter:"blur(10px)",color:"white",padding:"28px 24px",borderRadius:"16px",cursor:"pointer",flex:1,border:"1px solid rgba(255,255,255,0.2)",boxShadow:"0 8px 32px rgba(0,0,0,0.3)"}}>
+          {[{id:"gm",icon:"👔",title:"General Manager",sub:"Full access — all tabs",color:"rgba(26,58,92,0.92)"},{id:"lm",icon:"👷",title:"Labour Manager",sub:"Schedule · Absence · Overtime",color:"rgba(13,115,119,0.92)"},{id:"grower",icon:"🌱",title:"Grower",sub:"Demand review · Quarantine",color:"rgba(27,67,50,0.92)"}].map(r=>(
+            <div key={r.id} onClick={()=>{setRole(r.id);setPage(r.id==="grower"?"demand":"dashboard");}} style={{background:r.color,backdropFilter:"blur(10px)",color:"white",padding:"28px 24px",borderRadius:"16px",cursor:"pointer",flex:1,border:"1px solid rgba(255,255,255,0.2)",boxShadow:"0 8px 32px rgba(0,0,0,0.3)"}}>
               <div style={{fontSize:"36px",marginBottom:"10px"}}>{r.icon}</div>
               <div style={{fontWeight:"700",fontSize:"15px"}}>{r.title}</div>
               <div style={{fontSize:"11px",opacity:0.75,marginTop:"6px"}}>{r.sub}</div>
@@ -452,15 +455,16 @@ export default function App() {
   );
 
   const tabs=[
-    {id:"dashboard",label:"Dashboard",icon:"📊"},
-    {id:"staff",label:"Staff",icon:"👥"},
-    {id:"demand",label:"Demand",icon:"📋"},
-    {id:"schedule",label:"Schedule",icon:"📅"},
-    {id:"absence",label:"Absence",icon:"🏥"},
-    {id:"overtime",label:"Overtime",icon:"⏱️"},
-    {id:"edit",label:"Edit",icon:"✏️"},
-    ...(role==="gm"?[{id:"quarantine",label:"Quarantine",icon:"🔴"},{id:"backup",label:"Backup",icon:"💾"}]:[{id:"backup",label:"Backup",icon:"💾"}])
-  ];
+    {id:"dashboard",label:"Dashboard",icon:"📊",roles:["gm","lm"]},
+    {id:"staff",    label:"Staff",    icon:"👥",roles:["gm"]},
+    {id:"demand",   label:"Demand",   icon:"📋",roles:["gm","grower"]},
+    {id:"schedule", label:"Schedule", icon:"📅",roles:["gm","lm"]},
+    {id:"absence",  label:"Absence",  icon:"🏥",roles:["gm","lm"]},
+    {id:"overtime", label:"Overtime", icon:"⏱️",roles:["gm","lm"]},
+    {id:"edit",     label:"Edit",     icon:"✏️",roles:["gm"]},
+    {id:"quarantine",label:"Quarantine",icon:"🔴",roles:["gm","lm","grower"]},
+    {id:"backup",   label:"Backup",   icon:"💾",roles:["gm","lm"]},
+  ].filter(t=>t.roles.includes(role));
 
   return(
     <div style={{background:C.bg,minHeight:"100vh",fontFamily:"'Segoe UI',system-ui,sans-serif"}}>
@@ -620,6 +624,8 @@ export default function App() {
             activeWeekIndex={activeWeekIndex} setActiveWeekIndex={setActiveWeekIndex}
             totalCapacity={totalCapacity} generating={generating}
             generateSchedule={generateSchedule} setScheduleStale={setScheduleStale}
+            wsHolidays={wsHolidays} setWsHolidays={setWsHolidays}
+            role={role}
             btn={btn} inp={inp} card={card} C={C}/>
         )}
 
@@ -804,11 +810,11 @@ export default function App() {
         )}
 
         {/* ══ QUARANTINE ══ */}
-        {page==="quarantine"&&role==="gm"&&(
+        {page==="quarantine"&&(role==="gm"||role==="lm"||role==="grower")&&(
           <div>
             <div style={{display:"flex",alignItems:"center",gap:"12px",marginBottom:"16px"}}>
               <h2 style={{color:C.red,margin:0}}>🔴 Quarantine</h2>
-              <span style={{background:"#ffe5e5",color:C.red,padding:"4px 10px",borderRadius:"20px",fontSize:"12px",fontWeight:"700"}}>GM ONLY</span>
+              <span style={{background:"#ffe5e5",color:C.red,padding:"4px 10px",borderRadius:"20px",fontSize:"12px",fontWeight:"700"}}>{role==="gm"?"GM":"FULL ACCESS"}</span>
             </div>
             <div style={card}>
               <QuarantinePanel staff={staff} ghList={ghList} quarantine={quarantine} setQuarantine={setQuarantine} quarantineHistory={quarantineHistory} setQuarantineHistory={setQuarantineHistory} schedule={schedule} btn={btn} inp={inp} C={C} API={API} adelaideTime={adelaideTime} fmtISOReadable={fmtISOReadable} role={role}/>
@@ -906,9 +912,12 @@ function ClusterTransitionUI({clusters,setClusters,clusterTransitions,setCluster
 // ═══════════════════════════════════════════════════════════════════════════════
 // DEMAND PAGE — day-by-day entry per GH per crop per activity
 // ═══════════════════════════════════════════════════════════════════════════════
-function DemandPage({ghList,activities,cropTypes,demand,setDemand,cycles,setCycles,activeCycleId,setActiveCycleId,activeWeekIndex,setActiveWeekIndex,totalCapacity,generating,generateSchedule,setScheduleStale,btn,inp,card,C}){
+function DemandPage({ghList,activities,cropTypes,demand,setDemand,cycles,setCycles,activeCycleId,setActiveCycleId,activeWeekIndex,setActiveWeekIndex,totalCapacity,generating,generateSchedule,setScheduleStale,wsHolidays,setWsHolidays,role,btn,inp,card,C}){
   const fmtD=(iso)=>{if(!iso)return"";const d=new Date(iso);return d.toLocaleDateString("en-AU",{day:"2-digit",month:"short",year:"numeric"});};
   const addD=(iso,n)=>{const d=new Date(iso);d.setDate(d.getDate()+n);return d.toISOString().split("T")[0];};
+  const [demandSubTab,setDemandSubTab]=React.useState("ydp");
+  const [ydpSelGH,setYdpSelGH]=React.useState(null);
+  const [holidayForm,setHolidayForm]=React.useState({date:"",scope:"all",ghName:"",label:""});
   const ALL_DAYS_D=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
   const DAY_SHORT_D={"Monday":"Mon","Tuesday":"Tue","Wednesday":"Wed","Thursday":"Thu","Friday":"Fri","Saturday":"Sat","Sunday":"Sun"};
 
@@ -1036,9 +1045,168 @@ function DemandPage({ghList,activities,cropTypes,demand,setDemand,cycles,setCycl
     </div>
   );
 
+  // ── YDP Plans tab ──
+  const ydpPlans=React.useMemo(()=>{try{return JSON.parse(localStorage.getItem("ydp_plans_v1"))||[];}catch{return [];}});
+  const ydpGHs=React.useMemo(()=>{
+    const seen={};
+    ydpPlans.forEach(p=>{if(!seen[p.ghId])seen[p.ghId]={ghId:p.ghId,name:p.ghId,plans:[]};seen[p.ghId].plans.push(p);});
+    return Object.values(seen);
+  });
+  const ydpSel=ydpPlans.filter(p=>p.ghId===ydpSelGH);
+  const SPECIAL=["Picking","Pollination"];
+  const getCell=(cell)=>cell?.isManual?(parseFloat(cell.manualHours)||0):(cell?.hours||0);
+
+  // ── Holidays tab ──
+  const addHoliday=()=>{
+    if(!holidayForm.date||!holidayForm.label){alert("Date and label required.");return;}
+    setWsHolidays(prev=>[...prev,{id:`hol_${Date.now()}`,date:holidayForm.date,scope:holidayForm.scope,ghName:holidayForm.ghName,label:holidayForm.label}]);
+    setHolidayForm({date:"",scope:"all",ghName:"",label:""});
+  };
+  const removeHoliday=(id)=>setWsHolidays(prev=>prev.filter(h=>h.id!==id));
+
   return(
     <div>
-      <h2 style={{color:C.navy,marginBottom:"16px"}}>📋 Demand Planning</h2>
+      {/* ── Sub-tab switcher ── */}
+      <div style={{display:"flex",alignItems:"center",gap:"0",marginBottom:"18px",borderBottom:`2px solid ${C.border}`}}>
+        <h2 style={{color:C.navy,margin:"0 24px 0 0",fontSize:"18px"}}>📋 Demand</h2>
+        {[{id:"ydp",label:"From Labour Planner"},{id:"manual",label:"Manual Entry"},{id:"holidays",label:"Holidays"}].map(t=>(
+          <button key={t.id} onClick={()=>setDemandSubTab(t.id)} style={{background:"none",border:"none",borderBottom:demandSubTab===t.id?`3px solid ${C.teal}`:"3px solid transparent",padding:"10px 18px",cursor:"pointer",fontSize:"13px",fontWeight:demandSubTab===t.id?"700":"400",color:demandSubTab===t.id?C.teal:C.textMid,marginBottom:"-2px"}}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── YDP PLANS TAB ── */}
+      {demandSubTab==="ydp"&&(
+        <div style={{display:"flex",gap:0,height:"calc(100vh - 200px)",borderRadius:"10px",overflow:"hidden",border:`1px solid ${C.border}`,boxShadow:"0 2px 12px rgba(0,0,0,0.08)"}}>
+          {/* Left panel — GH list */}
+          <div style={{width:"220px",minWidth:"220px",background:C.navy,display:"flex",flexDirection:"column"}}>
+            <div style={{padding:"12px 14px",borderBottom:"1px solid rgba(255,255,255,0.1)"}}>
+              <div style={{color:"rgba(255,255,255,0.45)",fontSize:"10px",fontWeight:"700",letterSpacing:"2px",textTransform:"uppercase"}}>Greenhouses</div>
+              <div style={{color:"#52B788",fontSize:"11px",marginTop:"2px"}}>{ydpGHs.length} with plans</div>
+            </div>
+            <div style={{flex:1,overflowY:"auto"}}>
+              {ydpGHs.length===0&&<div style={{padding:"20px 14px",color:"rgba(255,255,255,0.35)",fontSize:"12px",fontStyle:"italic"}}>No plans populated yet — use the Yearly Demand Planner to create and populate plans.</div>}
+              {ydpGHs.map(g=>(
+                <button key={g.ghId} onClick={()=>setYdpSelGH(g.ghId)} style={{display:"block",width:"100%",textAlign:"left",padding:"10px 14px",background:ydpSelGH===g.ghId?"rgba(255,255,255,0.13)":"transparent",border:"none",borderLeft:ydpSelGH===g.ghId?"3px solid #52B788":"3px solid transparent",color:ydpSelGH===g.ghId?"white":"rgba(255,255,255,0.65)",cursor:"pointer",fontSize:"12px",fontWeight:ydpSelGH===g.ghId?"600":"400"}}>
+                  {g.name}<div style={{fontSize:"10px",color:"rgba(255,255,255,0.35)",marginTop:"2px"}}>{g.plans.length} plan{g.plans.length!==1?"s":""}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+          {/* Right panel — demand grid */}
+          <div style={{flex:1,background:"#f8faf8",overflow:"auto"}}>
+            {!ydpSelGH?<div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",color:C.textLight,fontStyle:"italic",fontSize:"14px"}}>Select a greenhouse to view its demand</div>:(
+              <div style={{padding:"16px"}}>
+                {ydpSel.length===0&&<div style={{color:C.textLight,fontStyle:"italic"}}>No plans for this greenhouse.</div>}
+                {ydpSel.map(plan=>{
+                  const acts=(activities||[]).filter(a=>!SPECIAL.includes(a));
+                  const totalPerWeek=plan.grid?.totalHrsPerWeek||[];
+                  return(
+                    <div key={plan.id} style={{marginBottom:"28px",border:`1px solid ${C.border}`,borderRadius:"8px",overflow:"hidden",background:"white"}}>
+                      <div style={{background:C.navy,padding:"10px 14px",display:"flex",alignItems:"center",gap:"12px"}}>
+                        <div style={{color:"white",fontWeight:"700",fontSize:"13px"}}>{plan.cropName}</div>
+                        <div style={{color:"rgba(255,255,255,0.6)",fontSize:"11px"}}>{fmtD(plan.startDate)} → {plan.cycleWeeks} wks</div>
+                        {plan.zone&&plan.zone!=="full"&&<div style={{background:"rgba(255,255,255,0.15)",color:"white",padding:"2px 8px",borderRadius:"10px",fontSize:"10px"}}>Zone {plan.zone}</div>}
+                        <div style={{marginLeft:"auto",background:"rgba(255,255,255,0.12)",color:"rgba(255,255,255,0.55)",padding:"2px 8px",borderRadius:"10px",fontSize:"10px",display:"flex",alignItems:"center",gap:"4px"}}>🔒 Read-only</div>
+                      </div>
+                      <div style={{overflowX:"auto"}}>
+                        <table style={{borderCollapse:"collapse",width:"100%",fontSize:"11px"}}>
+                          <thead>
+                            <tr style={{background:"#f0f4f8"}}>
+                              <th style={{padding:"7px 12px",textAlign:"left",fontWeight:"700",color:C.textDark,borderBottom:`1px solid ${C.border}`,position:"sticky",left:0,background:"#f0f4f8",minWidth:"140px"}}>Activity</th>
+                              {Array.from({length:plan.cycleWeeks},(_,i)=><th key={i} style={{padding:"7px 6px",textAlign:"center",fontWeight:"600",color:C.textMid,borderBottom:`1px solid ${C.border}`,minWidth:"48px"}}>W{i+1}</th>)}
+                              <th style={{padding:"7px 10px",textAlign:"center",fontWeight:"700",color:C.navy,borderBottom:`1px solid ${C.border}`,background:"#e8f4fd",minWidth:"60px"}}>Total</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {acts.map((act,ai)=>{
+                              const cells=plan.grid?.activities?.[act]||[];
+                              const rowTotal=cells.reduce((s,c)=>s+getCell(c),0);
+                              if(rowTotal===0)return null;
+                              return(
+                                <tr key={act} style={{background:ai%2===0?"white":"#f8faf8"}}>
+                                  <td style={{padding:"6px 12px",fontWeight:"500",color:C.textDark,borderBottom:`1px solid ${C.border}`,position:"sticky",left:0,background:ai%2===0?"white":"#f8faf8"}}>{act}</td>
+                                  {cells.map((c,wi)=>{const h=getCell(c);return(<td key={wi} style={{padding:"6px",textAlign:"center",color:h>0?C.navy:C.textLight,fontWeight:h>0?"600":"400",borderBottom:`1px solid ${C.border}`,background:c?.isManual?"#fffbf0":"inherit"}}>{h>0?h.toFixed(1):"–"}</td>);})}
+                                  {cells.length<plan.cycleWeeks&&Array.from({length:plan.cycleWeeks-cells.length},(_,i)=><td key={`pad-${i}`} style={{padding:"6px",textAlign:"center",color:C.textLight,borderBottom:`1px solid ${C.border}`}}>–</td>)}
+                                  <td style={{padding:"6px 10px",textAlign:"center",fontWeight:"700",color:C.navy,borderBottom:`1px solid ${C.border}`,background:"#e8f4fd"}}>{rowTotal.toFixed(1)}</td>
+                                </tr>
+                              );
+                            })}
+                            <tr>
+                              <td style={{padding:"6px 12px",fontWeight:"700",color:"#d4880e",borderBottom:`1px solid ${C.border}`,position:"sticky",left:0,background:"#fff8e6"}}>Picking</td>
+                              {Array.from({length:plan.cycleWeeks},(_,wi)=>{const h=getCell(plan.grid?.pickingCells?.[wi]);return(<td key={wi} style={{padding:"6px",textAlign:"center",color:h>0?"#d4880e":C.textLight,fontWeight:h>0?"600":"400",borderBottom:`1px solid ${C.border}`,background:"#fff8e6"}}>{h>0?h.toFixed(1):"–"}</td>);})}
+                              <td style={{padding:"6px 10px",textAlign:"center",fontWeight:"700",color:"#d4880e",borderBottom:`1px solid ${C.border}`,background:"#fff8e6"}}>{(plan.grid?.pickingCells||[]).reduce((s,c)=>s+getCell(c),0).toFixed(1)}</td>
+                            </tr>
+                            <tr>
+                              <td style={{padding:"6px 12px",fontWeight:"700",color:"#d4880e",borderBottom:`1px solid ${C.border}`,position:"sticky",left:0,background:"#fff8e6"}}>Pollination</td>
+                              {Array.from({length:plan.cycleWeeks},(_,wi)=>{const h=getCell(plan.grid?.pollinationCells?.[wi]);return(<td key={wi} style={{padding:"6px",textAlign:"center",color:h>0?"#d4880e":C.textLight,fontWeight:h>0?"600":"400",borderBottom:`1px solid ${C.border}`,background:"#fff8e6"}}>{h>0?h.toFixed(1):"–"}</td>);})}
+                              <td style={{padding:"6px 10px",textAlign:"center",fontWeight:"700",color:"#d4880e",borderBottom:`1px solid ${C.border}`,background:"#fff8e6"}}>{(plan.grid?.pollinationCells||[]).reduce((s,c)=>s+getCell(c),0).toFixed(1)}</td>
+                            </tr>
+                            <tr style={{background:C.navy}}>
+                              <td style={{padding:"7px 12px",fontWeight:"800",color:"white",position:"sticky",left:0,background:C.navy}}>Total hrs / week</td>
+                              {totalPerWeek.map((h,wi)=><td key={wi} style={{padding:"7px 6px",textAlign:"center",fontWeight:"800",color:h>0?"#52B788":"rgba(255,255,255,0.3)",fontSize:"12px"}}>{h>0?h.toFixed(1):"–"}</td>)}
+                              {totalPerWeek.length<plan.cycleWeeks&&Array.from({length:plan.cycleWeeks-totalPerWeek.length},(_,i)=><td key={`tp-${i}`} style={{padding:"7px 6px",textAlign:"center",color:"rgba(255,255,255,0.3)"}}>–</td>)}
+                              <td style={{padding:"7px 10px",textAlign:"center",fontWeight:"800",color:"#52B788",fontSize:"13px"}}>{totalPerWeek.reduce((s,h)=>s+h,0).toFixed(1)}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── HOLIDAYS TAB ── */}
+      {demandSubTab==="holidays"&&(
+        <div>
+          <div style={{...card,marginBottom:"16px"}}>
+            <h4 style={{color:C.navy,marginBottom:"14px",fontSize:"14px"}}>Add Holiday / Non-Working Day</h4>
+            <div style={{display:"flex",gap:"12px",flexWrap:"wrap",alignItems:"flex-end"}}>
+              <div><label style={{display:"block",fontSize:"12px",color:C.textMid,marginBottom:"4px"}}>Date</label><input type="date" value={holidayForm.date} onChange={e=>setHolidayForm(f=>({...f,date:e.target.value}))} style={inp}/></div>
+              <div><label style={{display:"block",fontSize:"12px",color:C.textMid,marginBottom:"4px"}}>Label</label><input value={holidayForm.label} onChange={e=>setHolidayForm(f=>({...f,label:e.target.value}))} placeholder="e.g. Christmas Day" style={{...inp,width:"180px"}}/></div>
+              <div><label style={{display:"block",fontSize:"12px",color:C.textMid,marginBottom:"4px"}}>Scope</label>
+                <select value={holidayForm.scope} onChange={e=>setHolidayForm(f=>({...f,scope:e.target.value,ghName:""}))} style={inp}>
+                  <option value="all">All greenhouses</option>
+                  <option value="specific">Specific greenhouse</option>
+                  <option value="partial">Partial day</option>
+                </select>
+              </div>
+              {holidayForm.scope==="specific"&&<div><label style={{display:"block",fontSize:"12px",color:C.textMid,marginBottom:"4px"}}>Greenhouse</label>
+                <select value={holidayForm.ghName} onChange={e=>setHolidayForm(f=>({...f,ghName:e.target.value}))} style={inp}>
+                  <option value="">Select…</option>
+                  {ghList.map(g=><option key={g.id} value={g.name}>{g.name}</option>)}
+                </select>
+              </div>}
+              <button onClick={addHoliday} style={{...btn(true,C.teal),padding:"9px 20px"}}>+ Add</button>
+            </div>
+          </div>
+          <div style={card}>
+            <h4 style={{color:C.navy,marginBottom:"12px",fontSize:"14px"}}>Holidays & Non-Working Days ({wsHolidays.length})</h4>
+            {wsHolidays.length===0?<p style={{color:C.textLight,fontStyle:"italic",fontSize:"13px"}}>No holidays entered yet.</p>:(
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:"13px"}}>
+                <thead><tr style={{background:C.navy,color:"white"}}><th style={{padding:"8px 12px",textAlign:"left"}}>Date</th><th style={{padding:"8px 12px",textAlign:"left"}}>Label</th><th style={{padding:"8px 12px",textAlign:"left"}}>Scope</th><th style={{padding:"8px 12px",textAlign:"center"}}>Remove</th></tr></thead>
+                <tbody>{wsHolidays.sort((a,b)=>a.date.localeCompare(b.date)).map((h,i)=>(
+                  <tr key={h.id} style={{background:i%2===0?"white":"#f8f9fa"}}>
+                    <td style={{padding:"8px 12px",borderBottom:`1px solid ${C.border}`}}>{fmtD(h.date)}</td>
+                    <td style={{padding:"8px 12px",borderBottom:`1px solid ${C.border}`,fontWeight:"600"}}>{h.label}</td>
+                    <td style={{padding:"8px 12px",borderBottom:`1px solid ${C.border}`,color:C.textMid}}>{h.scope==="all"?"All greenhouses":h.scope==="partial"?"Partial day":h.ghName||"—"}</td>
+                    <td style={{padding:"8px 12px",borderBottom:`1px solid ${C.border}`,textAlign:"center"}}><button onClick={()=>removeHoliday(h.id)} style={{...btn(false,"#c0392b"),padding:"4px 10px",fontSize:"11px"}}>✕</button></td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── MANUAL ENTRY TAB (existing demand planning) ── */}
+      {demandSubTab==="manual"&&<div>
+      <h3 style={{color:C.navy,marginBottom:"16px",fontSize:"15px"}}>Manual Demand Entry</h3>
 
       {/* Cycle tabs */}
       <div style={{...card,padding:"12px",marginBottom:"12px"}}>
@@ -1182,6 +1350,7 @@ function DemandPage({ghList,activities,cropTypes,demand,setDemand,cycles,setCycl
           <button onClick={()=>{if(window.confirm("Clear all demand for this week?")){const updated=cycles.map(cy=>cy.id===activeCycleId?{...cy,weeks:cy.weeks.map((w,wi)=>wi===activeWeekIndex?{...w,demand:{}}:w)}:cy);setCycles(updated);setDemand(prev=>({...prev,__cycles:updated}));}}} style={btn(false,C.red)}>🗑️ Clear This Week</button>
         </div>
       </div>
+      </div>}
     </div>
   );
 }
