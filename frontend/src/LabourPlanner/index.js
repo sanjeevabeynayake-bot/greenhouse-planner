@@ -83,7 +83,7 @@ export default function LabourPlanner({ lpRole: initRole }) {
   useEffect(() => {
     setPollinationData(prev => {
       const map = Object.fromEntries(prev.map(d => [d.ghId, d]));
-      return greenhouses.map(gh => map[gh.id] ?? { ghId: gh.id, ghName: gh.name, hoursPerRound: "" });
+      return greenhouses.map(gh => map[gh.id] ?? { ghId: gh.id, ghName: gh.name, hoursPerRound: "", roundsPerWeek: "" });
     });
   }, [greenhouses]);
 
