@@ -942,7 +942,7 @@ function SchedulePage({scheduleData,setScheduleData,dailyAllocation,confirmedWee
     setRunning(true);
     const{demand,crops}=aggregateDemand(selWeek);
     try{
-      const res=await axios.post(`${API}/schedule/optimise`,{
+      const res=await axios.post(`${API}/schedule-optimise`,{
         dailyDemand:demand,
         staff,absences,clusters,clusterTransitions,quarantine,
         ghCropsMap:crops,

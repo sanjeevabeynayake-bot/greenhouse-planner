@@ -1152,6 +1152,7 @@ def _greedy_daily_scheduler(daily_demand, staff, absences, clusters,
     }
 
 
+@app.post("/schedule-optimise")
 @app.post("/schedule/optimise")
 def schedule_optimise(payload: dict):
     """
