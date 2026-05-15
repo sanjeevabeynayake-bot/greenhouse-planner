@@ -73,7 +73,8 @@ export default function LabourPlanner({ lpRole: initRole }) {
       const map = Object.fromEntries(prev.map(d => [d.cropId, d]));
       return cropCycles.map(c => map[c.id] ?? {
         cropId: c.id,
-        timePerKg: "",
+        hrsPerSqm: "",
+        roundsPerWeek: "",
         weeklyVolumes: Array(c.weeks).fill(""),
         curveParams: { start: "", peak: "", peakWeek: "", end: "" },
       });

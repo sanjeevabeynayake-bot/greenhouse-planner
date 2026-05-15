@@ -56,11 +56,12 @@ function calcDemand({ cropCycles, greenhouses, cropMasterData, activities, polli
       });
     });
 
-    // Pollination: from PollinationMaster per GH
+    // Pollination: hoursPerRound × roundsPerWeek for weeks where Pollination is active
     const pollRow = pollinationData.find(d => d.ghId === gh.id);
-    const pollHrs = parseFloat(pollRow?.hoursPerRound) || 0;
-    if (pollHrs > 0) {
-      // Count weeks where Pollination is active (any crop in this GH)
+    const pollHrsPerRound = parseFloat(pollRow?.hoursPerRound) || 0;
+    const pollRounds = parseFloat(pollRow?.roundsPerWeek) || 0;
+    const pollWeeklyHrs = pollHrsPerRound * pollRounds;
+    if (pollWeeklyHrs > 0) {
       const pollActive = new Set();
       ghCrops.forEach(cropId => {
         const cycle = cropCycles.find(c => c.id === cropId);
@@ -70,33 +71,40 @@ function calcDemand({ cropCycles, greenhouses, cropMasterData, activities, polli
         }
       });
       pollActive.forEach(wi => {
-        demand[wi][POLL_ACT] = (demand[wi][POLL_ACT] || 0) + pollHrs;
+        demand[wi][POLL_ACT] = (demand[wi][POLL_ACT] || 0) + pollWeeklyHrs;
       });
     }
   });
 
-  // Picking: from PickingMaster per crop (summed across all GHs that grow that crop)
+  // Picking: hrsPerSqm × roundsPerWeek × cropSqm for weeks with non-zero volume
   cropCycles.forEach(crop => {
     const pd = pickingData.find(d => d.cropId === crop.id);
-    if (!pd?.timePerKg) return;
-    const tpk = parseFloat(pd.timePerKg) || 0;
-    if (!tpk) return;
+    const hrsPerSqm = parseFloat(pd?.hrsPerSqm) || 0;
+    const roundsPerWeek = parseFloat(pd?.roundsPerWeek) || 0;
+    const weeklyRate = hrsPerSqm * roundsPerWeek;
+    if (!weeklyRate) return;
 
-    // Count how many sqm of this crop across all GHs
+    // Sum sqm for this crop across all GHs
     let totalCropSqm = 0;
     greenhouses.forEach(gh => {
-      const ghSqm = parseFloat(gh.sqm) || 0;
-      const hasCrop = gh.splitZones
-        ? gh.zoneA.crops.includes(crop.id) || gh.zoneB.crops.includes(crop.id)
-        : gh.crops.includes(crop.id);
-      if (hasCrop && ghSqm) totalCropSqm += ghSqm;
+      let cropSqm = parseFloat(gh.sqm) || 0;
+      if (gh.splitZones) {
+        const inA = gh.zoneA.crops.includes(crop.id);
+        const inB = gh.zoneB.crops.includes(crop.id);
+        if (inA && !inB) cropSqm = parseFloat(gh.zoneA.sqm) || 0;
+        else if (!inA && inB) cropSqm = parseFloat(gh.zoneB.sqm) || 0;
+        else if (inA && inB) cropSqm = (parseFloat(gh.zoneA.sqm) || 0) + (parseFloat(gh.zoneB.sqm) || 0);
+        else cropSqm = 0;
+      } else {
+        if (!gh.crops.includes(crop.id)) cropSqm = 0;
+      }
+      totalCropSqm += cropSqm;
     });
+    if (!totalCropSqm) return;
 
     pd.weeklyVolumes.forEach((v, wi) => {
-      const vol = parseFloat(v) || 0;
-      if (!vol) return;
-      // Scale by proportion of sqm if needed; for now use raw volume hours
-      const hrs = vol * tpk;
+      if (!(parseFloat(v) > 0)) return;
+      const hrs = weeklyRate * totalCropSqm;
       demand[wi][PICKING_ACT] = (demand[wi][PICKING_ACT] || 0) + hrs;
     });
   });
@@ -177,8 +185,8 @@ export default function YearlyDemandPlanner({
               { label: "Crops assigned to GHs", ok: greenhouses.some(g => g.crops.length > 0 || g.zoneA?.crops?.length > 0 || g.zoneB?.crops?.length > 0) },
               { label: "Crop Cycle Master", ok: cropCycles.some(c => Object.keys(c.matrix).length > 0) },
               { label: "Crop Master rates", ok: cropMasterData.some(d => Object.values(d.cells || {}).some(c => c.h)) },
-              { label: "Pollination Master", ok: pollinationData.some(d => d.hoursPerRound) },
-              { label: "Picking Master", ok: pickingData.some(d => d.timePerKg && d.weeklyVolumes.some(v => parseFloat(v) > 0)) },
+              { label: "Pollination Master", ok: pollinationData.some(d => d.hoursPerRound && d.roundsPerWeek) },
+              { label: "Picking Master", ok: pickingData.some(d => d.hrsPerSqm && d.roundsPerWeek && d.weeklyVolumes.some(v => parseFloat(v) > 0)) },
             ].map(({ label, ok }) => (
               <div key={label} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: ok ? "#d8f3dc" : "#fff3cd", borderRadius: 8, border: `1px solid ${ok ? "#52B788" : "#C8870A"}` }}>
                 <span style={{ fontSize: 16 }}>{ok ? "✓" : "⚠"}</span>
