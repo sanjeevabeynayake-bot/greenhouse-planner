@@ -911,6 +911,10 @@ function SchedulePage({scheduleData,setScheduleData,dailyAllocation,confirmedWee
     if(!selWeek&&confirmedCalWeeks.length>0)setSelWeek(confirmedCalWeeks[0]);
   },[confirmedCalWeeks.length]);
 
+  // Normalise short day names (Mon→Monday) stored by DemandPage
+  const DAY_EXPAND={Mon:"Monday",Tue:"Tuesday",Wed:"Wednesday",Thu:"Thursday",Fri:"Friday",Sat:"Saturday",Sun:"Sunday"};
+  const normDay=(d)=>DAY_EXPAND[d]||d;
+
   // Aggregate daily demand for selected calendar week across all confirmed plans
   const aggregateDemand=React.useCallback((weekStart)=>{
     const demand={};const crops={};
@@ -926,7 +930,8 @@ function SchedulePage({scheduleData,setScheduleData,dailyAllocation,confirmedWee
         Object.entries(alloc).forEach(([act,days])=>{
           if(!demand[ghN][act])demand[ghN][act]={};
           Object.entries(days).forEach(([day,h])=>{
-            demand[ghN][act][day]=(demand[ghN][act][day]||0)+(parseFloat(h)||0);
+            const fullDay=normDay(day);
+            demand[ghN][act][fullDay]=(demand[ghN][act][fullDay]||0)+(parseFloat(h)||0);
           });
         });
       }
@@ -972,14 +977,18 @@ function SchedulePage({scheduleData,setScheduleData,dailyAllocation,confirmedWee
     setOverrides(prev=>({...prev,[selWeek]:{...(prev[selWeek]||{}),[k]:parseFloat(val)||0}}));
   };
 
-  // Unique lists for sidebars
+  // Demand data for the selected week (always available once week is chosen)
+  const weekDemand=React.useMemo(()=>selWeek?aggregateDemand(selWeek).demand:{},[selWeek,aggregateDemand]);
+  const demandGHList=Object.keys(weekDemand).sort();
+
+  // Unique lists from optimiser assignments
   const assigned=assignments.filter(a=>!a.unassigned);
   const unassigned=assignments.filter(a=>a.unassigned);
-  const ghList=[...new Set(assignments.map(a=>a.greenhouse))].sort();
+  const ghList=weekData?[...new Set(assignments.map(a=>a.greenhouse))].sort():demandGHList;
   const staffList=[...new Set(assigned.map(a=>a.staffId))].map(id=>{
     const a=assigned.find(x=>x.staffId===id);return{id,name:a?.staffName||id};
   }).sort((a,b)=>a.name.localeCompare(b.name));
-  const actList=[...new Set(assigned.map(a=>a.activity))].sort();
+  const actList=weekData?[...new Set(assigned.map(a=>a.activity))].sort():[...new Set(demandGHList.flatMap(gh=>Object.keys(weekDemand[gh]||{})))].sort();
 
   // Quality badge
   const qBg={optimal:"#dcfce7",feasible:"#fef9c3",greedy:"#e0f2fe",greedy_fallback:"#fce7f3",infeasible:"#fee2e2",timeout:"#fff7ed",unknown:"#f3f4f6"};
@@ -1049,12 +1058,8 @@ function SchedulePage({scheduleData,setScheduleData,dailyAllocation,confirmedWee
         )}
       </div>
 
-      {!selWeek||!weekData?(
-        <div style={card}>
-          <p style={{color:C.textLight,fontStyle:"italic",textAlign:"center",padding:"20px 0"}}>
-            {selWeek?"Click ⚡ Run CP-SAT Optimiser to generate the schedule for this week.":"Select a confirmed week above to view or generate its schedule."}
-          </p>
-        </div>
+      {!selWeek?(
+        <div style={card}><p style={{color:C.textLight,fontStyle:"italic",textAlign:"center",padding:"20px 0"}}>Select a confirmed week above to view or generate its schedule.</p></div>
       ):(
         <div>
           {/* Sub-tabs */}
@@ -1076,29 +1081,92 @@ function SchedulePage({scheduleData,setScheduleData,dailyAllocation,confirmedWee
               <div style={{width:"190px",minWidth:"190px",background:C.navy,display:"flex",flexDirection:"column"}}>
                 <div style={{padding:"10px 14px",borderBottom:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.45)",fontSize:"10px",fontWeight:"700",letterSpacing:"2px",textTransform:"uppercase"}}>Greenhouses</div>
                 <div style={{flex:1,overflowY:"auto"}}>
-                  {ghList.map(gh=>(
-                    <button key={gh} onClick={()=>setSelGH(gh)}
-                      style={{display:"block",width:"100%",textAlign:"left",padding:"10px 14px",background:selGH===gh?"rgba(255,255,255,0.13)":"transparent",border:"none",borderLeft:selGH===gh?"3px solid #52B788":"3px solid transparent",color:selGH===gh?"white":"rgba(255,255,255,0.65)",cursor:"pointer",fontSize:"12px",fontWeight:selGH===gh?"600":"400"}}>
-                      {gh}
-                      <div style={{fontSize:"10px",color:"rgba(255,255,255,0.35)",marginTop:"2px"}}>
-                        {assigned.filter(a=>a.greenhouse===gh).reduce((s,a)=>s+getHours(a),0).toFixed(1)}h this week
-                      </div>
-                    </button>
-                  ))}
+                  {ghList.length===0&&<div style={{padding:"14px",color:"rgba(255,255,255,0.35)",fontSize:"12px",fontStyle:"italic"}}>No demand confirmed yet</div>}
+                  {ghList.map(gh=>{
+                    const demH=DAYS.reduce((s,d)=>s+Object.values(weekDemand[gh]||{}).reduce((ss,days)=>ss+(days[d]||0),0),0);
+                    const assH=assigned.filter(a=>a.greenhouse===gh).reduce((s,a)=>s+getHours(a),0);
+                    return(
+                      <button key={gh} onClick={()=>setSelGH(gh)}
+                        style={{display:"block",width:"100%",textAlign:"left",padding:"10px 14px",background:selGH===gh?"rgba(255,255,255,0.13)":"transparent",border:"none",borderLeft:selGH===gh?"3px solid #52B788":"3px solid transparent",color:selGH===gh?"white":"rgba(255,255,255,0.65)",cursor:"pointer",fontSize:"12px",fontWeight:selGH===gh?"600":"400"}}>
+                        {gh}
+                        <div style={{fontSize:"10px",color:"rgba(255,255,255,0.35)",marginTop:"2px"}}>
+                          {weekData?`${assH.toFixed(1)}h assigned / ${demH.toFixed(1)}h demand`:`${demH.toFixed(1)}h demand`}
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
               <div style={{flex:1,background:"#f8faf8",overflow:"auto"}}>
                 {!selGH?<div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",color:C.textLight,fontStyle:"italic"}}>Select a greenhouse</div>:(
                   <div style={{padding:"14px"}}>
-                    {DAYS.map(day=>{
+                    {/* Demand grid — always shown */}
+                    {!weekData&&(
+                      <div style={{marginBottom:"16px",background:"#fffbea",border:"1px solid #fde68a",borderRadius:"8px",padding:"10px 14px",fontSize:"12px",color:"#92400e"}}>
+                        ⚡ Run CP-SAT Optimiser above to assign staff to this demand.
+                      </div>
+                    )}
+                    {/* Activity × Day demand table */}
+                    {(()=>{
+                      const ghDem=weekDemand[selGH]||{};
+                      const acts=Object.keys(ghDem).sort();
+                      if(!acts.length)return<div style={{color:C.textLight,fontStyle:"italic",fontSize:"13px"}}>No demand allocated for this greenhouse in the Demand tab.</div>;
+                      return(
+                        <div style={{marginBottom:"16px",background:"white",border:`1px solid ${C.border}`,borderRadius:"8px",overflow:"hidden"}}>
+                          <div style={{background:C.navy,padding:"8px 14px",display:"flex",gap:"8px",alignItems:"center"}}>
+                            <span style={{color:"white",fontWeight:"700",fontSize:"12px",flex:1}}>📋 Demand (hrs / activity / day)</span>
+                          </div>
+                          <div style={{overflowX:"auto"}}>
+                            <table style={{width:"100%",borderCollapse:"collapse",fontSize:"12px"}}>
+                              <thead>
+                                <tr style={{background:"#f0f4f8"}}>
+                                  <th style={{padding:"6px 12px",textAlign:"left",color:C.textMid,fontWeight:"600",borderBottom:`1px solid ${C.border}`,minWidth:"140px"}}>Activity</th>
+                                  {DAYS.map(d=><th key={d} style={{padding:"6px 8px",textAlign:"center",color:C.textMid,fontWeight:"600",borderBottom:`1px solid ${C.border}`,minWidth:"52px"}}>{DAY_S[d]}</th>)}
+                                  <th style={{padding:"6px 8px",textAlign:"center",color:C.textMid,fontWeight:"600",borderBottom:`1px solid ${C.border}`}}>Total</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {acts.map((act,i)=>{
+                                  const row=ghDem[act]||{};
+                                  const total=DAYS.reduce((s,d)=>s+(row[d]||0),0);
+                                  return(
+                                    <tr key={act} style={{background:i%2===0?"white":"#f8faf8"}}>
+                                      <td style={{padding:"6px 12px",color:C.textDark,fontWeight:"500",borderBottom:`1px solid #e5e7eb`}}>{act}</td>
+                                      {DAYS.map(d=>{
+                                        const h=row[d]||0;
+                                        const assAct=assigned.filter(a=>a.greenhouse===selGH&&a.activity===act&&a.day===d);
+                                        const assH=assAct.reduce((s,a)=>s+getHours(a),0);
+                                        return(
+                                          <td key={d} style={{padding:"4px 8px",textAlign:"center",borderBottom:`1px solid #e5e7eb`,background:h>0?(weekData?(assH>=h*0.95?"#dcfce7":assH>0?"#fef9c3":"#fee2e2"):"#f0fdf4"):"white"}}>
+                                            {h>0?(
+                                              <div>
+                                                <div style={{fontWeight:"700",color:C.navy,fontSize:"12px"}}>{h}h</div>
+                                                {weekData&&assH>0&&<div style={{fontSize:"10px",color:"#166534"}}>{assH.toFixed(1)}✓</div>}
+                                              </div>
+                                            ):"—"}
+                                          </td>
+                                        );
+                                      })}
+                                      <td style={{padding:"6px 8px",textAlign:"center",fontWeight:"700",color:C.navy,borderBottom:`1px solid #e5e7eb`,background:"#f0f4f8"}}>{total.toFixed(1)}</td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                    {/* Staff assignments per day (post-optimiser) */}
+                    {weekData&&DAYS.map(day=>{
                       const dayRows=assigned.filter(a=>a.greenhouse===selGH&&a.day===day);
                       if(!dayRows.length)return null;
                       const acts=[...new Set(dayRows.map(a=>a.activity))].sort();
                       return(
                         <div key={day} style={{marginBottom:"14px",border:`1px solid ${C.border}`,borderRadius:"8px",overflow:"hidden",background:"white"}}>
-                          <div style={{background:C.navy,padding:"8px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                          <div style={{background:"#1e3a5f",padding:"8px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                             <span style={{color:"white",fontWeight:"700",fontSize:"13px"}}>{day}</span>
-                            <span style={{color:"#52B788",fontSize:"12px"}}>{dayRows.reduce((s,a)=>s+getHours(a),0).toFixed(1)} hrs total</span>
+                            <span style={{color:"#52B788",fontSize:"12px"}}>{dayRows.reduce((s,a)=>s+getHours(a),0).toFixed(1)} hrs assigned</span>
                           </div>
                           {acts.map(act=>{
                             const actRows=dayRows.filter(a=>a.activity===act);
@@ -1119,7 +1187,7 @@ function SchedulePage({scheduleData,setScheduleData,dailyAllocation,confirmedWee
                       );
                     })}
                     {/* Unmet slots for this GH */}
-                    {unassigned.filter(a=>a.greenhouse===selGH).map((a,i)=>(
+                    {weekData&&unassigned.filter(a=>a.greenhouse===selGH).map((a,i)=>(
                       <div key={i} style={{background:"#fee2e2",border:"1px solid #fca5a5",borderRadius:"6px",padding:"8px 12px",marginBottom:"6px",fontSize:"12px",color:"#991b1b"}}>
                         ⚠️ {a.day} · {a.activity} · {a.hours}h unassigned — no eligible staff with capacity
                       </div>
@@ -1215,13 +1283,17 @@ function SchedulePage({scheduleData,setScheduleData,dailyAllocation,confirmedWee
               <div style={{width:"190px",minWidth:"190px",background:C.navy,display:"flex",flexDirection:"column"}}>
                 <div style={{padding:"10px 14px",borderBottom:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.45)",fontSize:"10px",fontWeight:"700",letterSpacing:"2px",textTransform:"uppercase"}}>Activities</div>
                 <div style={{flex:1,overflowY:"auto"}}>
+                  {actList.length===0&&<div style={{padding:"14px",color:"rgba(255,255,255,0.35)",fontSize:"12px",fontStyle:"italic"}}>No demand confirmed yet</div>}
                   {actList.map(act=>{
-                    const hrs=assigned.filter(a=>a.activity===act).reduce((s,a)=>s+getHours(a),0);
+                    const demH=demandGHList.reduce((s,gh)=>s+DAYS.reduce((ss,d)=>ss+((weekDemand[gh]||{})[act]?.[d]||0),0),0);
+                    const assH=assigned.filter(a=>a.activity===act).reduce((s,a)=>s+getHours(a),0);
                     return(
                       <button key={act} onClick={()=>setSelAct(act)}
                         style={{display:"block",width:"100%",textAlign:"left",padding:"10px 14px",background:selAct===act?"rgba(255,255,255,0.13)":"transparent",border:"none",borderLeft:selAct===act?"3px solid #52B788":"3px solid transparent",color:selAct===act?"white":"rgba(255,255,255,0.65)",cursor:"pointer",fontSize:"12px",fontWeight:selAct===act?"600":"400"}}>
                         {act}
-                        <div style={{fontSize:"10px",color:"rgba(255,255,255,0.35)",marginTop:"2px"}}>{hrs.toFixed(1)}h · {[...new Set(assigned.filter(a=>a.activity===act).map(a=>a.staffId))].length} staff</div>
+                        <div style={{fontSize:"10px",color:"rgba(255,255,255,0.35)",marginTop:"2px"}}>
+                          {weekData?`${assH.toFixed(1)}h assigned / ${demH.toFixed(1)}h demand`:`${demH.toFixed(1)}h demand`}
+                        </div>
                       </button>
                     );
                   })}
@@ -1230,15 +1302,48 @@ function SchedulePage({scheduleData,setScheduleData,dailyAllocation,confirmedWee
               <div style={{flex:1,background:"#f8faf8",overflow:"auto"}}>
                 {!selAct?<div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",color:C.textLight,fontStyle:"italic"}}>Select an activity</div>:(
                   <div style={{padding:"14px"}}>
-                    {ghList.map(gh=>{
+                    {/* Demand summary per GH for this activity */}
+                    <div style={{marginBottom:"14px",background:"white",border:`1px solid ${C.border}`,borderRadius:"8px",overflow:"hidden"}}>
+                      <div style={{background:C.navy,padding:"8px 14px",display:"flex",gap:"8px",alignItems:"center"}}>
+                        <span style={{color:"white",fontWeight:"700",fontSize:"12px",flex:1}}>📋 {selAct} — Demand by Greenhouse & Day</span>
+                      </div>
+                      <table style={{width:"100%",borderCollapse:"collapse",fontSize:"12px"}}>
+                        <thead><tr style={{background:"#f0f4f8"}}>
+                          <th style={{padding:"6px 12px",textAlign:"left",fontWeight:"700",color:C.navy,borderBottom:`1px solid ${C.border}`}}>Greenhouse</th>
+                          {DAYS.map(d=><th key={d} style={{padding:"6px 8px",textAlign:"center",fontWeight:"600",color:["Saturday","Sunday"].includes(d)?"#b45309":C.textMid,borderBottom:`1px solid ${C.border}`,minWidth:"52px"}}>{DAY_S[d]}</th>)}
+                          <th style={{padding:"6px 8px",textAlign:"center",fontWeight:"700",color:C.navy,borderBottom:`1px solid ${C.border}`,background:"#e8f4fd"}}>Total</th>
+                        </tr></thead>
+                        <tbody>
+                          {demandGHList.filter(gh=>(weekDemand[gh]||{})[selAct]).map((gh,gi)=>{
+                            const row=(weekDemand[gh]||{})[selAct]||{};
+                            const total=DAYS.reduce((s,d)=>s+(row[d]||0),0);
+                            return(
+                              <tr key={gh} style={{background:gi%2===0?"white":"#f8faf8"}}>
+                                <td style={{padding:"7px 12px",color:C.textDark,fontWeight:"500",borderBottom:`1px solid #e5e7eb`}}>{gh}</td>
+                                {DAYS.map(d=>{
+                                  const h=row[d]||0;
+                                  const assH=assigned.filter(a=>a.greenhouse===gh&&a.activity===selAct&&a.day===d).reduce((s,a)=>s+getHours(a),0);
+                                  return<td key={d} style={{padding:"5px 4px",textAlign:"center",borderBottom:`1px solid #e5e7eb`,background:["Saturday","Sunday"].includes(d)?"#fffbf0":h>0?(weekData?(assH>=h*0.95?"#dcfce7":assH>0?"#fef9c3":"#fee2e2"):"#f0fdf4"):undefined}}>
+                                    {h>0?(<div><div style={{fontWeight:"700",color:C.navy}}>{h}h</div>{weekData&&assH>0&&<div style={{fontSize:"10px",color:"#166534"}}>{assH.toFixed(1)}✓</div>}</div>):"—"}
+                                  </td>;
+                                })}
+                                <td style={{padding:"7px 8px",textAlign:"center",fontWeight:"700",color:C.navy,borderBottom:`1px solid #e5e7eb`,background:"#e8f4fd"}}>{total.toFixed(1)}h</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                    {/* Staff assignments (post-optimiser) */}
+                    {weekData&&ghList.map(gh=>{
                       const ghActRows=assigned.filter(a=>a.greenhouse===gh&&a.activity===selAct);
                       if(!ghActRows.length)return null;
                       const ghHrs=ghActRows.reduce((s,a)=>s+getHours(a),0);
                       return(
                         <div key={gh} style={{marginBottom:"14px",border:`1px solid ${C.border}`,borderRadius:"8px",overflow:"hidden",background:"white"}}>
-                          <div style={{background:C.navy,padding:"8px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                          <div style={{background:"#1e3a5f",padding:"8px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                             <span style={{color:"white",fontWeight:"700",fontSize:"13px"}}>{gh}</span>
-                            <span style={{color:"#52B788",fontSize:"12px"}}>{ghHrs.toFixed(1)} hrs</span>
+                            <span style={{color:"#52B788",fontSize:"12px"}}>{ghHrs.toFixed(1)} hrs assigned</span>
                           </div>
                           <table style={{width:"100%",borderCollapse:"collapse",fontSize:"12px"}}>
                             <thead><tr style={{background:"#f0f4f8"}}>
@@ -1268,8 +1373,7 @@ function SchedulePage({scheduleData,setScheduleData,dailyAllocation,confirmedWee
                         </div>
                       );
                     })}
-                    {/* Unmet for this activity */}
-                    {unassigned.filter(a=>a.activity===selAct).map((a,i)=>(
+                    {weekData&&unassigned.filter(a=>a.activity===selAct).map((a,i)=>(
                       <div key={i} style={{background:"#fee2e2",border:"1px solid #fca5a5",borderRadius:"6px",padding:"8px 12px",marginBottom:"6px",fontSize:"12px",color:"#991b1b"}}>
                         ⚠️ {a.greenhouse} · {a.day} · {a.hours}h unassigned
                       </div>
