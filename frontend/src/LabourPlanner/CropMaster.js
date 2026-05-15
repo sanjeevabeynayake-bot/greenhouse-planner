@@ -389,16 +389,22 @@ export default function CropMaster({ cropCycles, activities, cropMasterData, set
                                   onBlur={e => setWeekCell(act, wi, eff.h, e.target.value)}
                                   style={{ width: "100%", padding: "2px", border: `1px solid ${LP.mid}`, borderRadius: 3, fontSize: 10, textAlign: "center", fontFamily: "inherit" }} />
                               </div>
-                            ) : (
-                              <div style={{ fontSize: 10, lineHeight: 1.3 }}>
-                                <div style={{ color: cs.color, fontStyle: cs.fontStyle, fontWeight: eff.source === "manual" ? 700 : 400 }}>
-                                  {displayH || (isStd ? "·" : "")}
+                            ) : (() => {
+                              const h = parseFloat(displayH);
+                              const t = parseFloat(eff.t);
+                              const product = h > 0 && t > 0 ? (h * t).toFixed(2) : null;
+                              return (
+                                <div style={{ fontSize: 10, lineHeight: 1.3 }}>
+                                  <div style={{ color: cs.color, fontStyle: cs.fontStyle, fontWeight: eff.source === "manual" ? 700 : 400 }}>
+                                    {product ?? (displayH || (isStd ? "·" : ""))}
+                                  </div>
+                                  {product
+                                    ? <div style={{ color: LP.textLight, fontSize: 8 }}>h/m²/wk</div>
+                                    : eff.t && <div style={{ color: LP.textLight, fontSize: 9, fontStyle: cs.fontStyle }}>×{eff.t}</div>
+                                  }
                                 </div>
-                                {eff.t && (
-                                  <div style={{ color: LP.textLight, fontSize: 9, fontStyle: cs.fontStyle }}>×{eff.t}</div>
-                                )}
-                              </div>
-                            )}
+                              );
+                            })()}
                           </td>
                         );
                       })}
