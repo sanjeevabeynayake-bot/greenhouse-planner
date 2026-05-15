@@ -392,7 +392,7 @@ export default function CropMaster({ cropCycles, activities, cropMasterData, set
                             ) : (() => {
                               const h = parseFloat(displayH);
                               const t = parseFloat(eff.t);
-                              const product = h > 0 && t > 0 ? (h * t).toFixed(2) : null;
+                              const product = h > 0 && t > 0 ? String(parseFloat((h * t).toFixed(5))) : null;
                               return (
                                 <div style={{ fontSize: 10, lineHeight: 1.3 }}>
                                   <div style={{ color: cs.color, fontStyle: cs.fontStyle, fontWeight: eff.source === "manual" ? 700 : 400 }}>

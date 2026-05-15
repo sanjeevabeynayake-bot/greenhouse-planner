@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from "react";
 import { LP, lpBtn, lpInp } from "./styles";
 
-// ─── localStorage ─────────────────────────────────────────────────
+// ─── localStorage ──────────────────────────────────────────────────
 const PLANS_KEY = "ydp_plans_v1";
 function loadPlans() {
   try { return JSON.parse(localStorage.getItem(PLANS_KEY)) || []; }
@@ -41,24 +41,116 @@ function planPosition(plan, today) {
   return "current";
 }
 
-// ─── Status logic ──────────────────────────────────────────────────
+// ─── Grid builder ─────────────────────────────────────────────────
+const SPECIAL_ACTS = ["Picking", "Pollination"];
+
+function buildGrid(planData, { cropCycles, cropMasterData, greenhouses, pollinationData, pickingData, activities }) {
+  const crop = cropCycles.find(c => c.id === planData.cropId);
+  const masterData = cropMasterData.find(d => d.cropId === planData.cropId);
+  const gh = (greenhouses || []).find(g => g && g.id === planData.ghId);
+  const pollData = (pollinationData || []).find(d => d.ghId === planData.ghId);
+  const pickData = (pickingData || []).find(d => d.cropId === planData.cropId);
+
+  const masterDensity = parseFloat(masterData?.density) || 0;
+  const sqm = parseFloat(
+    planData.zone === "A" ? gh?.zoneA?.sqm :
+    planData.zone === "B" ? gh?.zoneB?.sqm : gh?.sqm
+  ) || 0;
+
+  const N = planData.cycleWeeks;
+
+  // Per-week density: read from Crop Master densityWeeks array
+  const densityWeeks = Array.from({ length: N }, (_, i) => {
+    const dw = masterData?.densityWeeks;
+    if (dw && i < dw.length && dw[i] != null) return String(dw[i].value);
+    return String(masterData?.density ?? "");
+  });
+
+  // Regular activity cells (excluding Picking and Pollination)
+  const regularActs = (activities || []).filter(a => !SPECIAL_ACTS.includes(a));
+  const activityGrid = {};
+
+  for (const act of regularActs) {
+    const actCell = masterData?.cells?.[act] ?? { h: "", t: "", weeks: null };
+    const cells = Array.from({ length: N }, (_, wi) => {
+      const ticked = !!(crop?.matrix?.[`${act}|||${wi}`]);
+      if (!ticked) return { hours: null, ticked: false };
+
+      const weekOverride = actCell.weeks?.[wi];
+      const rawH = (weekOverride?.h != null && weekOverride.h !== "") ? weekOverride.h : actCell.h;
+      const rawT = (weekOverride?.t != null && weekOverride.t !== "") ? weekOverride.t : actCell.t;
+      const effH = parseFloat(rawH) || 0;
+      const effT = parseFloat(rawT) || 0;
+
+      const weekDensity = parseFloat(densityWeeks[wi]) || masterDensity;
+      const densityRatio = masterDensity > 0 ? weekDensity / masterDensity : 1;
+      const hours = (effH > 0 && effT > 0 && sqm > 0)
+        ? effH * densityRatio * effT * sqm
+        : null;
+
+      return { hours, ticked: true };
+    });
+    activityGrid[act] = cells;
+  }
+
+  // Picking cells: vol / kgPerHour per week
+  const pickingCells = Array.from({ length: N }, (_, i) => {
+    const vols = pickData?.weeklyVolumes ?? [];
+    const vol = parseFloat(i < vols.length ? (vols[i] ?? 0) : 0) || 0;
+    const kgPerHour = parseFloat(pickData?.kgPerHour) || 0;
+    const hours = (vol > 0 && kgPerHour > 0) ? vol / kgPerHour : null;
+    return { hours };
+  });
+
+  // Pollination cells: constant per week from GH pollination master
+  const pollHPR = parseFloat(pollData?.hoursPerRound) || 0;
+  const pollRPW = parseFloat(pollData?.roundsPerWeek) || 0;
+  const pollWkly = (pollHPR > 0 && pollRPW > 0) ? pollHPR * pollRPW : null;
+  const pollinationCells = Array.from({ length: N }, () => ({ hours: pollWkly }));
+
+  // Total hours per week (sum of all activities)
+  const totalHrsPerWeek = Array.from({ length: N }, (_, wi) => {
+    let total = 0;
+    for (const act of regularActs) total += activityGrid[act]?.[wi]?.hours || 0;
+    total += pickingCells[wi]?.hours || 0;
+    total += pollinationCells[wi]?.hours || 0;
+    return total;
+  });
+
+  return { densityWeeks, activities: activityGrid, pickingCells, pollinationCells, sqm: String(sqm), totalHrsPerWeek };
+}
+
+// ─── Plan status helpers ───────────────────────────────────────────
+function getPlanStatus(plan, today) {
+  const pos = planPosition(plan, today);
+  if (pos === "past") return "past";
+  if (plan.sentToScheduler && pos === "current") return "active";
+  if (plan.sentToScheduler) return "populated";
+  return "draft";
+}
+
 function zoneStatus(ghId, zone, plans, today) {
   const zp = plans.filter(p => p.ghId === ghId && p.zone === zone);
   if (zp.length === 0) return "no-plan";
-  const current = zp.find(p => planPosition(p, today) === "current");
-  if (current) return current.state === "populated" ? "populated" : "active";
-  return "draft";
+  const statuses = zp.map(p => getPlanStatus(p, today));
+  for (const s of ["active", "populated", "draft"]) {
+    if (statuses.includes(s)) return s;
+  }
+  return "past";
 }
+
 function ghOverallStatus(gh, plans, today) {
   if (gh.splitZones) {
     const a = zoneStatus(gh.id, "A", plans, today);
     const b = zoneStatus(gh.id, "B", plans, today);
-    for (const s of ["active", "populated", "draft", "no-plan"]) {
+    for (const s of ["active", "populated", "draft", "no-plan", "past"]) {
       if (a === s || b === s) return s;
     }
+    return "no-plan";
   }
   return zoneStatus(gh.id, "full", plans, today);
 }
+
 function matchesFilter(filter, status) {
   if (filter === "All") return true;
   const map = { "No Plan": "no-plan", Active: "active", Draft: "draft", Populated: "populated" };
@@ -67,12 +159,13 @@ function matchesFilter(filter, status) {
 
 // ─── Status badge ──────────────────────────────────────────────────
 const STATUS_CFG = {
-  "no-plan":  { bg: "#D8DDD8", color: LP.textMid,     label: "No Plan"    },
-  active:     { bg: LP.mint,   color: LP.forest,       label: "Active"     },
-  draft:      { bg: "#E8F4FD", color: "#1565C0",       label: "Draft"      },
-  populated:  { bg: LP.amberLight, color: LP.amber,    label: "Populated"  },
-  past:       { bg: "#EFEFEF", color: LP.textLight,    label: "Past"       },
+  "no-plan":  { bg: "#D8DDD8",       color: LP.textMid,   label: "No Plan"   },
+  active:     { bg: LP.mint,         color: LP.forest,    label: "Active"    },
+  draft:      { bg: "#E8F4FD",       color: "#1565C0",    label: "Draft"     },
+  populated:  { bg: LP.amberLight,   color: LP.amber,     label: "Populated" },
+  past:       { bg: "#EFEFEF",       color: LP.textLight, label: "Past"      },
 };
+
 function StatusBadge({ status, small }) {
   const c = STATUS_CFG[status] || STATUS_CFG["no-plan"];
   return (
@@ -85,12 +178,10 @@ function StatusBadge({ status, small }) {
   );
 }
 
-// ─── Left panel pieces ─────────────────────────────────────────────
-function PlanRow({ plan, cropCycles, today, isSelected, onClick }) {
+// ─── Left panel pieces ────────────────────────────────────────────
+function PlanRow({ plan, today, isSelected, onClick }) {
   const pos = planPosition(plan, today);
-  const rowStatus = pos === "past" ? "past"
-    : plan.state === "populated" ? "populated"
-    : pos === "current" ? "active" : "draft";
+  const rowStatus = getPlanStatus(plan, today);
   return (
     <button onClick={onClick} style={{
       display: "flex", alignItems: "center", gap: 6,
@@ -120,21 +211,21 @@ function PlanRow({ plan, cropCycles, today, isSelected, onClick }) {
 
 function NewCycleButton({ onClick }) {
   return (
-    <button onClick={onClick} style={{
-      display: "flex", alignItems: "center", gap: 6,
-      padding: "7px 14px 7px 28px", background: "transparent",
-      border: "none", color: "rgba(255,255,255,0.4)", fontSize: 11,
-      cursor: "pointer", width: "100%", textAlign: "left", minHeight: 40,
-    }}
+    <button onClick={onClick}
       onMouseEnter={e => e.currentTarget.style.color = LP.light}
       onMouseLeave={e => e.currentTarget.style.color = "rgba(255,255,255,0.4)"}
-    >
+      style={{
+        display: "flex", alignItems: "center", gap: 6,
+        padding: "7px 14px 7px 28px", background: "transparent",
+        border: "none", color: "rgba(255,255,255,0.4)", fontSize: 11,
+        cursor: "pointer", width: "100%", textAlign: "left", minHeight: 40,
+      }}>
       <span style={{ fontSize: 14 }}>+</span><span>New Cycle</span>
     </button>
   );
 }
 
-function ZoneBlock({ label, gh, zone, plans, cropCycles, today, selected, setSelected }) {
+function ZoneBlock({ label, gh, zone, plans, today, selected, setSelected }) {
   const zonePlans = plans.filter(p => p.zone === zone)
     .sort((a, b) => new Date(a.startDate) - new Date(b.startDate));
   return (
@@ -145,7 +236,7 @@ function ZoneBlock({ label, gh, zone, plans, cropCycles, today, selected, setSel
         background: "rgba(0,0,0,0.1)", borderBottom: "1px solid rgba(255,255,255,0.04)",
       }}>Zone {label}</div>
       {zonePlans.map(p => (
-        <PlanRow key={p.id} plan={p} cropCycles={cropCycles} today={today}
+        <PlanRow key={p.id} plan={p} today={today}
           isSelected={selected?.planId === p.id}
           onClick={() => setSelected({ type: "plan", planId: p.id, ghId: gh.id, zone })} />
       ))}
@@ -154,7 +245,7 @@ function ZoneBlock({ label, gh, zone, plans, cropCycles, today, selected, setSel
   );
 }
 
-// ─── Create Plan Form ──────────────────────────────────────────────
+// ─── Create Plan Form ─────────────────────────────────────────────
 function CreatePlanForm({ gh, zone, plans, cropCycles, onCreated, onCancel }) {
   const availableCropIds = zone === "A" ? (gh.zoneA?.crops || [])
     : zone === "B" ? (gh.zoneB?.crops || [])
@@ -176,7 +267,6 @@ function CreatePlanForm({ gh, zone, plans, cropCycles, onCreated, onCancel }) {
 
   const selectedCrop = cropCycles.find(c => c.id === cropId);
 
-  // Auto-fill weeks from Crop Cycle Master
   useMemo(() => {
     if (cropId && !overrideWeeks && selectedCrop) setCycleWeeks(String(selectedCrop.weeks));
     if (!cropId) setCycleWeeks("");
@@ -202,7 +292,6 @@ function CreatePlanForm({ gh, zone, plans, cropCycles, onCreated, onCancel }) {
       cropName: selectedCrop?.name || "",
       startDate, cycleWeeks: weeks,
       cycleWeeksOverride: overrideWeeks,
-      state: "draft",
       sentToScheduler: false,
       grid: null,
       auditLog: [{ action: "created", at: new Date().toISOString() }],
@@ -258,7 +347,8 @@ function CreatePlanForm({ gh, zone, plans, cropCycles, onCreated, onCancel }) {
             <div style={{ fontSize: 12, color: LP.textMid, marginTop: 2, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <span>Previous cycle ends <strong>{fmtDate(prevEndDate)}</strong>. Suggested: <strong>{fmtDate(suggestedStart)}</strong></span>
               {startDate !== toInputDate(suggestedStart) && (
-                <button onClick={() => setStartDate(toInputDate(suggestedStart))} style={{ background: "none", border: `1px solid ${LP.border}`, borderRadius: 6, padding: "2px 8px", cursor: "pointer", fontSize: 11, color: LP.mid, fontFamily: "inherit" }}>
+                <button onClick={() => setStartDate(toInputDate(suggestedStart))}
+                  style={{ background: "none", border: `1px solid ${LP.border}`, borderRadius: 6, padding: "2px 8px", cursor: "pointer", fontSize: 11, color: LP.mid, fontFamily: "inherit" }}>
                   Use this date
                 </button>
               )}
@@ -317,7 +407,8 @@ function CreatePlanForm({ gh, zone, plans, cropCycles, onCreated, onCancel }) {
         )}
 
         <div style={{ marginTop: 8 }}>
-          <button onClick={handleCreate} disabled={!canCreate} style={{ ...lpBtn(canCreate, LP.forest), padding: "12px 32px", fontSize: 14, opacity: canCreate ? 1 : 0.45, cursor: canCreate ? "pointer" : "not-allowed" }}>
+          <button onClick={handleCreate} disabled={!canCreate}
+            style={{ ...lpBtn(canCreate, LP.forest), padding: "12px 32px", fontSize: 14, opacity: canCreate ? 1 : 0.45, cursor: canCreate ? "pointer" : "not-allowed" }}>
             Create Plan →
           </button>
           {!cropId && <div style={{ fontSize: 11, color: LP.textLight, marginTop: 8 }}>Select a crop to continue</div>}
@@ -327,52 +418,74 @@ function CreatePlanForm({ gh, zone, plans, cropCycles, onCreated, onCancel }) {
   );
 }
 
-// ─── Plan Grid (Step 4 scaffold + Steps 5–6 activity rows) ─────────
-function PlanView({ plan, gh, cropCycles, cropMasterData, plans, setPlans, today }) {
-  const pos = planPosition(plan, today);
-  // Locked = active (running today) or past
-  const isLocked = pos === "current" || pos === "past";
-
-  const crop = cropCycles.find(c => c.id === plan.cropId);
+// ─── Plan View ────────────────────────────────────────────────────
+function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinationData, pickingData, setPlans, today }) {
   const masterData = cropMasterData.find(d => d.cropId === plan.cropId);
-  const masterDensity = masterData?.density || "";
+
+  const pos = planPosition(plan, today);
+  const status = pos === "past" ? "past"
+    : plan.sentToScheduler && pos === "current" ? "active"
+    : plan.sentToScheduler ? "populated"
+    : "draft";
+  const isLocked = status === "active" || status === "past";
 
   const sqm = plan.zone === "A" ? (gh?.zoneA?.sqm || "")
     : plan.zone === "B" ? (gh?.zoneB?.sqm || "")
     : (gh?.sqm || "");
-
   const zoneLbl = plan.zone === "A" ? " — Zone A" : plan.zone === "B" ? " — Zone B" : "";
 
-  const status = pos === "past" ? "past"
-    : pos === "current" ? "active"
-    : "draft";
-
-  // Populate condition: within 28 days of plan start
-  const startObj = parseDate(plan.startDate);
-  const activationDate = addDays(startObj, -28);
+  // Populate window: available from 28 days before plan start
+  const activationDate = addDays(parseDate(plan.startDate), -28);
   const canPopulate = !isLocked && today >= activationDate;
-  const populateTooltip = !canPopulate && !isLocked
-    ? `Available from ${fmtDate(activationDate)}` : "";
+  const populateTooltip = !canPopulate && !isLocked ? `Available from ${fmtDate(activationDate)}` : "";
 
   // Warnings
+  const crop = cropCycles.find(c => c.id === plan.cropId);
   const warnings = [];
   if (!sqm) warnings.push("Greenhouse sq metres not set — configure in Greenhouse Master");
-  if (!masterDensity) warnings.push(`${plan.cropName} density not set — configure in Crop Master`);
+  if (!masterData?.density) warnings.push(`${plan.cropName} density not set — configure in Crop Master`);
   if (crop && Object.keys(crop.matrix || {}).length === 0)
     warnings.push(`${plan.cropName} has no ticked activities in Crop Cycle Master`);
 
-  // Week column headers with Monday dates
+  // Week column headers
   const weekHeaders = Array.from({ length: plan.cycleWeeks }, (_, i) => ({
     label: `W${i + 1}`,
     date: addDays(parseDate(plan.startDate), i * 7),
   }));
 
-  // Density values for each week (from grid or master)
-  const densityVals = Array.from({ length: plan.cycleWeeks }, (_, i) =>
-    plan.grid?.densityWeeks?.[i] ?? masterDensity
-  );
+  // Density per week: grid snapshot → Crop Master per-week → Crop Master scalar
+  const masterDensityStr = masterData?.density || "";
+  const densityVals = Array.from({ length: plan.cycleWeeks }, (_, i) => {
+    if (plan.grid?.densityWeeks?.[i] != null) return plan.grid.densityWeeks[i];
+    const dw = masterData?.densityWeeks;
+    if (dw && i < dw.length && dw[i] != null) return String(dw[i].value);
+    return masterDensityStr;
+  });
 
-  // Shared styles
+  const regularActs = (activities || []).filter(a => !SPECIAL_ACTS.includes(a));
+
+  const doRecalculate = () => {
+    const newGrid = buildGrid(plan, {
+      cropCycles, cropMasterData,
+      greenhouses: gh ? [gh] : [],
+      pollinationData, pickingData, activities,
+    });
+    setPlans(prev => prev.map(p => p.id === plan.id ? { ...p, grid: newGrid } : p));
+  };
+
+  const doPopulate = () => {
+    const newGrid = buildGrid(plan, {
+      cropCycles, cropMasterData,
+      greenhouses: gh ? [gh] : [],
+      pollinationData, pickingData, activities,
+    });
+    setPlans(prev => prev.map(p => p.id === plan.id ? {
+      ...p, grid: newGrid, sentToScheduler: true,
+      auditLog: [...(p.auditLog || []), { action: "populated", at: new Date().toISOString() }],
+    } : p));
+  };
+
+  // Shared style helpers
   const thBase = {
     background: LP.forest, color: LP.white,
     padding: "6px 3px", textAlign: "center",
@@ -381,29 +494,32 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, plans, setPlans, today
     position: "sticky", top: 0, zIndex: 2,
     userSelect: "none",
   };
-  const stickyLabel = (bg, color, borderBottom) => ({
+
+  const stickyLbl = (bg, color, bb) => ({
     position: "sticky", left: 0, zIndex: 2,
     background: bg, color,
     fontSize: 11, fontWeight: 600,
     padding: "0 12px",
     borderRight: `2px solid ${LP.mid}`,
-    borderBottom: borderBottom || `1px solid ${LP.borderLight}`,
+    borderBottom: bb || `1px solid ${LP.borderLight}`,
     height: 44, verticalAlign: "middle",
-    whiteSpace: "nowrap",
+    whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+    maxWidth: 180,
     boxShadow: "2px 0 6px rgba(0,0,0,0.12)",
   });
-  const dataCell = (bg, color, borderBottom) => ({
+
+  const dataC = (bg, color, bb) => ({
     textAlign: "center", height: 44, verticalAlign: "middle",
     background: bg, color,
     borderLeft: "1px solid rgba(0,0,0,0.05)",
-    borderBottom: borderBottom || `1px solid ${LP.borderLight}`,
-    fontSize: 12,
+    borderBottom: bb || `1px solid ${LP.borderLight}`,
+    fontSize: 11, padding: "2px 4px",
   });
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
 
-      {/* ── Header bar ── */}
+      {/* Header */}
       <div style={{ padding: "13px 20px", background: LP.white, borderBottom: `1px solid ${LP.border}`, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 17, fontWeight: 700, color: LP.forest, fontFamily: "'Palatino Linotype', Georgia, serif", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -415,17 +531,25 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, plans, setPlans, today
         </div>
         <StatusBadge status={status} />
 
+        {status === "populated" && (
+          <div style={{ fontSize: 11, color: LP.amber, fontWeight: 600 }}>✓ Sent to scheduler</div>
+        )}
+
         {!isLocked && (
           <>
-            <button style={{ ...lpBtn(false, LP.mid), padding: "8px 16px", minHeight: 44 }}>
+            <button onClick={doRecalculate}
+              style={{ ...lpBtn(false, LP.mid), padding: "8px 16px", minHeight: 44 }}>
               ↻ Recalculate
             </button>
             <div style={{ position: "relative" }}>
               <button
+                onClick={canPopulate ? doPopulate : undefined}
                 disabled={!canPopulate}
                 title={populateTooltip}
                 style={{ ...lpBtn(canPopulate, LP.light), padding: "8px 18px", minHeight: 44, opacity: canPopulate ? 1 : 0.5, cursor: canPopulate ? "pointer" : "not-allowed" }}>
-                {canPopulate ? "▶ Populate to Scheduler" : "🔒 Populate to Scheduler"}
+                {plan.sentToScheduler
+                  ? (canPopulate ? "↺ Re-populate" : "🔒 Re-populate")
+                  : (canPopulate ? "▶ Populate to Scheduler" : "🔒 Populate to Scheduler")}
               </button>
               {!canPopulate && populateTooltip && (
                 <div style={{ position: "absolute", bottom: "calc(100% + 6px)", right: 0, background: LP.textDark, color: LP.white, fontSize: 11, padding: "5px 10px", borderRadius: 6, whiteSpace: "nowrap", zIndex: 10 }}>
@@ -435,24 +559,31 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, plans, setPlans, today
             </div>
           </>
         )}
-        {isLocked && pos === "current" && (
+        {status === "active" && (
           <div style={{ fontSize: 12, color: LP.textLight, display: "flex", alignItems: "center", gap: 6 }}>
             <span>🔒</span><span>Active plan — read only</span>
           </div>
         )}
-        {pos === "past" && (
+        {status === "past" && (
           <div style={{ fontSize: 12, color: LP.textLight, fontStyle: "italic" }}>Historical record</div>
         )}
       </div>
 
-      {/* ── Warning banner ── */}
+      {/* Warning banner */}
       {warnings.length > 0 && (
         <div style={{ padding: "9px 20px", background: LP.amberLight, borderBottom: `2px solid ${LP.amber}`, fontSize: 12, color: LP.amber, fontWeight: 500, lineHeight: 1.6 }}>
           ⚠ {warnings.join(" · ")}
         </div>
       )}
 
-      {/* ── Grid ── */}
+      {/* No grid info */}
+      {!plan.grid && (
+        <div style={{ padding: "8px 20px", background: "#E8F4FD", borderBottom: "1px solid #90CAF9", fontSize: 12, color: "#1565C0" }}>
+          ℹ Grid not yet built — click <strong>Recalculate</strong> to generate the activity schedule.
+        </div>
+      )}
+
+      {/* Grid */}
       <div style={{ flex: 1, overflow: "auto" }}>
         <table style={{ borderCollapse: "separate", borderSpacing: 0, tableLayout: "fixed" }}>
           <colgroup>
@@ -465,11 +596,9 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, plans, setPlans, today
                 Activity / Week
               </th>
               {weekHeaders.map(({ label, date }) => (
-                <th key={label} style={{ ...thBase }}>
+                <th key={label} style={thBase}>
                   <div style={{ fontSize: 10, fontWeight: 700 }}>{label}</div>
-                  <div style={{ fontSize: 9, color: LP.mint, fontWeight: 400, marginTop: 1 }}>
-                    {fmtDateShort(date)}
-                  </div>
+                  <div style={{ fontSize: 9, color: LP.mint, fontWeight: 400, marginTop: 1 }}>{fmtDateShort(date)}</div>
                 </th>
               ))}
             </tr>
@@ -478,40 +607,107 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, plans, setPlans, today
 
             {/* Density row */}
             <tr>
-              <td style={stickyLabel("#fff8e7", LP.amber, `2px solid ${LP.amber}`)}>
+              <td style={stickyLbl("#fff8e7", LP.amber, `2px solid ${LP.amber}`)}>
                 Density (pl/m²)
               </td>
               {densityVals.map((d, i) => (
-                <td key={i} style={{
-                  ...dataCell("#fff8e7", LP.amber, `2px solid ${LP.amber}`),
-                  fontWeight: 600,
-                }}>
+                <td key={i} style={{ ...dataC("#fff8e7", LP.amber, `2px solid ${LP.amber}`), fontWeight: 600 }}>
                   {d || "–"}
                 </td>
               ))}
             </tr>
 
-            {/* Sq metres row — read-only, constant */}
+            {/* Sq metres row */}
             <tr>
-              <td style={stickyLabel("#F0F4F0", LP.textMid)}>
+              <td style={stickyLbl("#F0F4F0", LP.textMid)}>
                 Sq Metres (m²)
               </td>
               {Array.from({ length: plan.cycleWeeks }, (_, i) => (
-                <td key={i} style={dataCell("#F0F4F0", LP.textMid)}>
+                <td key={i} style={dataC("#F0F4F0", LP.textMid)}>
                   {sqm || "–"}
                 </td>
               ))}
             </tr>
 
-            {/* Activity rows placeholder */}
+            {/* Regular activity rows */}
+            {regularActs.map((act, ai) => {
+              const cells = plan.grid?.activities?.[act];
+              const rowBg = ai % 2 === 0 ? LP.white : "#F5F8F5";
+              return (
+                <tr key={act}>
+                  <td style={stickyLbl(rowBg, LP.textDark)}>
+                    {act}
+                  </td>
+                  {Array.from({ length: plan.cycleWeeks }, (_, wi) => {
+                    const cell = cells?.[wi];
+                    const ticked = cell?.ticked ?? false;
+                    const hours = cell?.hours;
+                    const bg = ticked ? (hours != null ? "#d8f3dc" : LP.amberLight) : "#f0f0f0";
+                    const color = ticked ? (hours != null ? LP.forest : LP.amber) : LP.textLight;
+                    return (
+                      <td key={wi} style={dataC(bg, color)}>
+                        {ticked ? (hours != null ? hours.toFixed(1) : "?") : "–"}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+
+            {/* Picking row */}
             <tr>
-              <td colSpan={plan.cycleWeeks + 1} style={{
-                padding: "28px 20px", textAlign: "center",
-                color: LP.textLight, fontSize: 13, fontStyle: "italic",
-                background: LP.cream, borderBottom: `1px solid ${LP.borderLight}`,
-              }}>
-                Activity rows load here — completing in Steps 5 &amp; 6
+              <td style={{ ...stickyLbl(LP.amberLight, LP.amber, `2px solid ${LP.amber}`), borderLeft: `4px solid ${LP.amber}` }}>
+                ★ Picking
               </td>
+              {Array.from({ length: plan.cycleWeeks }, (_, wi) => {
+                const hours = plan.grid?.pickingCells?.[wi]?.hours;
+                return (
+                  <td key={wi} style={dataC(
+                    hours != null ? LP.amberLight : "#f0f0f0",
+                    hours != null ? LP.amber : LP.textLight,
+                    `2px solid ${LP.amber}`
+                  )}>
+                    {hours != null ? hours.toFixed(1) : "–"}
+                  </td>
+                );
+              })}
+            </tr>
+
+            {/* Pollination row */}
+            <tr>
+              <td style={{ ...stickyLbl(LP.amberLight, LP.amber, `2px solid ${LP.amber}`), borderLeft: `4px solid ${LP.amber}` }}>
+                ★ Pollination
+              </td>
+              {Array.from({ length: plan.cycleWeeks }, (_, wi) => {
+                const hours = plan.grid?.pollinationCells?.[wi]?.hours;
+                return (
+                  <td key={wi} style={dataC(
+                    hours != null ? LP.amberLight : "#f0f0f0",
+                    hours != null ? LP.amber : LP.textLight,
+                    `2px solid ${LP.amber}`
+                  )}>
+                    {hours != null ? hours.toFixed(1) : "–"}
+                  </td>
+                );
+              })}
+            </tr>
+
+            {/* Total row */}
+            <tr>
+              <td style={{ ...stickyLbl(LP.forest, LP.white, `2px solid ${LP.mid}`), fontWeight: 800, fontSize: 12 }}>
+                Total hrs / week
+              </td>
+              {Array.from({ length: plan.cycleWeeks }, (_, wi) => {
+                const hrs = plan.grid?.totalHrsPerWeek?.[wi] ?? 0;
+                return (
+                  <td key={wi} style={{
+                    ...dataC(LP.forest, hrs > 0 ? LP.mint : "rgba(255,255,255,0.3)", `2px solid ${LP.mid}`),
+                    fontWeight: hrs > 0 ? 800 : 400, fontSize: 12,
+                  }}>
+                    {hrs > 0 ? hrs.toFixed(1) : "–"}
+                  </td>
+                );
+              })}
             </tr>
 
           </tbody>
@@ -521,14 +717,154 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, plans, setPlans, today
   );
 }
 
-// ─── Main component ────────────────────────────────────────────────
+// ─── Summary View (Step 9) ────────────────────────────────────────
+function SummaryView({ greenhouses, plans, today }) {
+  const WEEKS = 26;
+  const weekStarts = Array.from({ length: WEEKS }, (_, i) => addDays(today, i * 7));
+
+  const rows = [];
+  for (const gh of greenhouses) {
+    if (gh.splitZones) {
+      rows.push({ type: "gh-header", gh });
+      rows.push({ type: "zone", gh, zone: "A" });
+      rows.push({ type: "zone", gh, zone: "B" });
+    } else {
+      rows.push({ type: "full", gh });
+    }
+  }
+
+  const getCellPlan = (ghId, zone, weekStart) =>
+    plans.find(p => {
+      if (p.ghId !== ghId || p.zone !== zone) return false;
+      const s = parseDate(p.startDate), e = planEnd(p);
+      return weekStart >= s && weekStart < e;
+    });
+
+  const thStyle = {
+    background: LP.forest, color: LP.white,
+    padding: "4px 2px", fontSize: 9, fontWeight: 700,
+    textAlign: "center", whiteSpace: "nowrap",
+    position: "sticky", top: 0, zIndex: 2,
+    borderLeft: "1px solid rgba(255,255,255,0.1)",
+  };
+
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div style={{ padding: "13px 20px", background: LP.white, borderBottom: `1px solid ${LP.border}`, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 17, fontWeight: 700, color: LP.forest, fontFamily: "'Palatino Linotype', Georgia, serif" }}>
+            26-Week Demand Overview
+          </div>
+          <div style={{ fontSize: 11, color: LP.textLight, marginTop: 2 }}>
+            {fmtDate(today)} → {fmtDate(addDays(today, WEEKS * 7))} · All greenhouses
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          {Object.entries(STATUS_CFG).map(([k, v]) => (
+            <span key={k} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, color: LP.textMid }}>
+              <span style={{ width: 10, height: 10, background: v.bg, border: "1px solid rgba(0,0,0,0.1)", borderRadius: 2, display: "inline-block" }} />
+              {v.label}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ flex: 1, overflow: "auto" }}>
+        <table style={{ borderCollapse: "separate", borderSpacing: 0, tableLayout: "fixed" }}>
+          <colgroup>
+            <col style={{ width: 200 }} />
+            {weekStarts.map((_, i) => <col key={i} style={{ width: 68 }} />)}
+          </colgroup>
+          <thead>
+            <tr>
+              <th style={{ ...thStyle, position: "sticky", left: 0, zIndex: 4, textAlign: "left", padding: "6px 12px", borderLeft: "none" }}>
+                Greenhouse / Zone
+              </th>
+              {weekStarts.map((ws, i) => (
+                <th key={i} style={thStyle}>
+                  <div>W{i+1}</div>
+                  <div style={{ fontSize: 7.5, color: LP.mint }}>{fmtDateShort(ws)}</div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, ri) => {
+              if (row.type === "gh-header") {
+                return (
+                  <tr key={`hdr-${row.gh.id}`}>
+                    <td colSpan={WEEKS + 1} style={{
+                      padding: "3px 12px", fontSize: 10, fontWeight: 700,
+                      color: LP.textMid, background: LP.cream,
+                      borderBottom: `1px solid ${LP.border}`,
+                    }}>{row.gh.name}</td>
+                  </tr>
+                );
+              }
+
+              const zone = row.zone || "full";
+              const ghId = row.gh.id;
+              const rowLabel = row.type === "zone" ? `  Zone ${row.zone}` : row.gh.name;
+              const rowBg = ri % 2 === 0 ? LP.white : LP.cream;
+
+              return (
+                <tr key={`${ghId}-${zone}`}>
+                  <td style={{
+                    position: "sticky", left: 0, zIndex: 1,
+                    padding: "0 12px",
+                    fontSize: row.type === "zone" ? 10 : 11,
+                    color: row.type === "zone" ? LP.textLight : LP.textDark,
+                    fontWeight: row.type === "zone" ? 400 : 500,
+                    background: rowBg,
+                    borderBottom: `1px solid ${LP.borderLight}`,
+                    height: 34, verticalAlign: "middle", whiteSpace: "nowrap",
+                    overflow: "hidden", textOverflow: "ellipsis",
+                    borderRight: `2px solid ${LP.border}`,
+                    boxShadow: "2px 0 4px rgba(0,0,0,0.08)",
+                  }}>{rowLabel}</td>
+                  {weekStarts.map((ws, wi) => {
+                    const p = getCellPlan(ghId, zone, ws);
+                    if (!p) return (
+                      <td key={wi} style={{
+                        height: 34, textAlign: "center", verticalAlign: "middle",
+                        background: rowBg, fontSize: 9, color: LP.textLight,
+                        borderLeft: "1px solid rgba(0,0,0,0.04)",
+                        borderBottom: `1px solid ${LP.borderLight}`,
+                      }}>–</td>
+                    );
+                    const st = getPlanStatus(p, today);
+                    const cfg = STATUS_CFG[st] || STATUS_CFG.draft;
+                    return (
+                      <td key={wi} title={`${p.cropName} — ${cfg.label}`} style={{
+                        height: 34, textAlign: "center", verticalAlign: "middle",
+                        background: cfg.bg, color: cfg.color,
+                        fontSize: 8, fontWeight: 600,
+                        borderLeft: "1px solid rgba(0,0,0,0.04)",
+                        borderBottom: `1px solid ${LP.borderLight}`,
+                        overflow: "hidden", padding: "0 2px",
+                      }}>
+                        {p.cropName.length > 9 ? p.cropName.slice(0, 8) + "…" : p.cropName}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ─── Main component ───────────────────────────────────────────────
 const FILTERS = ["All", "No Plan", "Active", "Draft", "Populated"];
 
 export default function YearlyDemandPlanner({
   greenhouses, cropCycles, cropMasterData, activities,
   pollinationData, pickingData, lpRole,
 }) {
-  const today = useMemo(() => { const d = new Date(); d.setHours(0,0,0,0); return d; }, []);
+  const today = useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }, []);
 
   const [plans, setPlansRaw] = useState(loadPlans);
   const setPlans = (fn) => {
@@ -541,6 +877,7 @@ export default function YearlyDemandPlanner({
   const [expandedGHs, setExpandedGHs] = useState(new Set());
   const [filter, setFilter] = useState("All");
   const [selected, setSelected] = useState(null);
+  const [showSummary, setShowSummary] = useState(false);
 
   const ghStatuses = useMemo(() =>
     Object.fromEntries(greenhouses.map(gh => [gh.id, ghOverallStatus(gh, plans, today)])),
@@ -554,7 +891,9 @@ export default function YearlyDemandPlanner({
   };
 
   const handleCreated = (newPlan) => {
-    setPlans(prev => [...prev, newPlan]);
+    const grid = buildGrid(newPlan, { cropCycles, cropMasterData, greenhouses, pollinationData, pickingData, activities });
+    const planWithGrid = { ...newPlan, grid };
+    setPlans(prev => [...prev, planWithGrid]);
     setExpandedGHs(prev => new Set([...prev, newPlan.ghId]));
     setSelected({ type: "plan", planId: newPlan.id, ghId: newPlan.ghId, zone: newPlan.zone });
   };
@@ -568,8 +907,24 @@ export default function YearlyDemandPlanner({
       {/* ── LEFT PANEL ── */}
       <div style={{ width: 290, minWidth: 290, background: LP.forest, display: "flex", flexDirection: "column", borderRight: "1px solid rgba(255,255,255,0.1)" }}>
         <div style={{ padding: "14px 16px 10px", borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
-          <div style={{ color: LP.white, fontSize: 15, fontWeight: 700, fontFamily: "'Palatino Linotype', Georgia, serif", marginBottom: 2 }}>Greenhouse Plans</div>
-          <div style={{ color: LP.mint, fontSize: 11 }}>{greenhouses.length} greenhouses · {plans.length} cycle{plans.length !== 1 ? "s" : ""} planned</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+            <div style={{ color: LP.white, fontSize: 15, fontWeight: 700, fontFamily: "'Palatino Linotype', Georgia, serif", flex: 1 }}>
+              Greenhouse Plans
+            </div>
+            <button
+              onClick={() => { setShowSummary(v => !v); if (!showSummary) setSelected(null); }}
+              style={{
+                background: showSummary ? "rgba(255,255,255,0.18)" : "transparent",
+                color: showSummary ? LP.white : "rgba(255,255,255,0.55)",
+                border: `1px solid ${showSummary ? "rgba(255,255,255,0.35)" : "rgba(255,255,255,0.18)"}`,
+                borderRadius: 6, padding: "3px 8px", cursor: "pointer",
+                fontSize: 10, fontWeight: 600, fontFamily: "inherit",
+                minHeight: 26, whiteSpace: "nowrap", transition: "all 0.1s",
+              }}>📊 Overview</button>
+          </div>
+          <div style={{ color: LP.mint, fontSize: 11 }}>
+            {greenhouses.length} greenhouses · {plans.length} cycle{plans.length !== 1 ? "s" : ""} planned
+          </div>
         </div>
 
         <div style={{ padding: "8px 10px", gap: 4, display: "flex", flexWrap: "wrap", borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
@@ -587,7 +942,9 @@ export default function YearlyDemandPlanner({
 
         <div style={{ flex: 1, overflowY: "auto" }}>
           {filteredGHs.length === 0 && (
-            <div style={{ padding: "24px 16px", color: "rgba(255,255,255,0.3)", fontSize: 12, fontStyle: "italic", textAlign: "center" }}>No greenhouses match filter</div>
+            <div style={{ padding: "24px 16px", color: "rgba(255,255,255,0.3)", fontSize: 12, fontStyle: "italic", textAlign: "center" }}>
+              No greenhouses match filter
+            </div>
           )}
           {filteredGHs.map(gh => {
             const isExp = expandedGHs.has(gh.id);
@@ -595,26 +952,39 @@ export default function YearlyDemandPlanner({
               .sort((a, b) => new Date(a.startDate) - new Date(b.startDate));
             return (
               <div key={gh.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-                <button onClick={() => toggleExpand(gh.id)} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", background: isExp ? "rgba(255,255,255,0.08)" : "transparent", border: "none", cursor: "pointer", minHeight: 48, transition: "background 0.1s" }}>
-                  <span style={{ color: isExp ? LP.light : "rgba(255,255,255,0.35)", fontSize: 10, width: 10, flexShrink: 0 }}>{isExp ? "▾" : "▸"}</span>
-                  <span style={{ flex: 1, textAlign: "left", color: LP.white, fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{gh.name}</span>
+                <button onClick={() => toggleExpand(gh.id)} style={{
+                  display: "flex", alignItems: "center", gap: 8, width: "100%",
+                  padding: "10px 14px",
+                  background: isExp ? "rgba(255,255,255,0.08)" : "transparent",
+                  border: "none", cursor: "pointer", minHeight: 48, transition: "background 0.1s",
+                }}>
+                  <span style={{ color: isExp ? LP.light : "rgba(255,255,255,0.35)", fontSize: 10, width: 10, flexShrink: 0 }}>
+                    {isExp ? "▾" : "▸"}
+                  </span>
+                  <span style={{ flex: 1, textAlign: "left", color: LP.white, fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {gh.name}
+                  </span>
                   <StatusBadge status={ghStatuses[gh.id]} />
                 </button>
                 {isExp && (
                   <div style={{ background: "rgba(0,0,0,0.18)" }}>
                     {gh.splitZones ? (
                       <>
-                        <ZoneBlock label="A" gh={gh} zone="A" plans={ghPlans} cropCycles={cropCycles} today={today} selected={selected} setSelected={setSelected} />
-                        <ZoneBlock label="B" gh={gh} zone="B" plans={ghPlans} cropCycles={cropCycles} today={today} selected={selected} setSelected={setSelected} />
+                        <ZoneBlock label="A" gh={gh} zone="A" plans={ghPlans} today={today}
+                          selected={selected}
+                          setSelected={s => { setShowSummary(false); setSelected(s); }} />
+                        <ZoneBlock label="B" gh={gh} zone="B" plans={ghPlans} today={today}
+                          selected={selected}
+                          setSelected={s => { setShowSummary(false); setSelected(s); }} />
                       </>
                     ) : (
                       <>
                         {ghPlans.filter(p => p.zone === "full").map(p => (
-                          <PlanRow key={p.id} plan={p} cropCycles={cropCycles} today={today}
+                          <PlanRow key={p.id} plan={p} today={today}
                             isSelected={selected?.planId === p.id}
-                            onClick={() => setSelected({ type: "plan", planId: p.id, ghId: gh.id, zone: "full" })} />
+                            onClick={() => { setShowSummary(false); setSelected({ type: "plan", planId: p.id, ghId: gh.id, zone: "full" }); }} />
                         ))}
-                        <NewCycleButton onClick={() => setSelected({ type: "new", ghId: gh.id, zone: "full" })} />
+                        <NewCycleButton onClick={() => { setShowSummary(false); setSelected({ type: "new", ghId: gh.id, zone: "full" }); }} />
                       </>
                     )}
                   </div>
@@ -627,7 +997,9 @@ export default function YearlyDemandPlanner({
 
       {/* ── RIGHT PANEL ── */}
       <div style={{ flex: 1, background: LP.cream, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        {selected == null ? (
+        {showSummary ? (
+          <SummaryView greenhouses={greenhouses} plans={plans} today={today} />
+        ) : selected == null ? (
           <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12 }}>
             <div style={{ fontSize: 36, opacity: 0.2 }}>🏭</div>
             <div style={{ color: LP.textLight, fontSize: 15, fontStyle: "italic" }}>Select a greenhouse to view or create plans</div>
@@ -638,11 +1010,16 @@ export default function YearlyDemandPlanner({
             cropCycles={cropCycles} onCreated={handleCreated}
             onCancel={() => setSelected(null)} />
         ) : selectedPlan ? (
-          <PlanView plan={selectedPlan} gh={selectedGH}
+          <PlanView
+            plan={selectedPlan} gh={selectedGH}
             cropCycles={cropCycles} cropMasterData={cropMasterData}
-            plans={plans} setPlans={setPlans} today={today} />
+            activities={activities} pollinationData={pollinationData} pickingData={pickingData}
+            setPlans={setPlans} today={today}
+          />
         ) : (
-          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: LP.textLight, fontStyle: "italic" }}>Plan not found</div>
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: LP.textLight, fontStyle: "italic" }}>
+            Plan not found
+          </div>
         )}
       </div>
     </div>
