@@ -1,7 +1,6 @@
 import React, { useState } from "react";
 import { LP, lpBtn, lpInp } from "./styles";
 
-// Picking and Pollination are hidden from Crop Master (managed in their own masters)
 const HIDDEN_FROM_CROP_MASTER = ["Picking", "Pollination"];
 const DENSITY_EXCLUDED = ["Picking", "Pollination"];
 
@@ -19,7 +18,6 @@ function getEffective(actCell, wi) {
   return { h: actCell.h, t: actCell.t, source: "master" };
 }
 
-// forward-fill from week idx when user sets a value manually
 function applyForwardFill(weeks, numWeeks, idx, newH, newT) {
   const result = weeks ? [...weeks] : Array(numWeeks).fill(null);
   while (result.length < numWeeks) result.push(null);
@@ -31,8 +29,28 @@ function applyForwardFill(weeks, numWeeks, idx, newH, newT) {
   return result;
 }
 
+// Forward-fill for the density row
+function applyDensityFF(densityWeeks, numWeeks, idx, newValue) {
+  const result = densityWeeks ? [...densityWeeks] : Array(numWeeks).fill(null);
+  while (result.length < numWeeks) result.push(null);
+  result[idx] = { value: newValue, manual: true };
+  for (let i = idx + 1; i < numWeeks; i++) {
+    if (result[i]?.manual) break;
+    result[i] = { value: newValue, manual: false };
+  }
+  return result;
+}
+
+function getDensityForWeek(data, wi) {
+  const dw = data.densityWeeks;
+  if (dw && wi < dw.length && dw[wi] != null) {
+    return { value: dw[wi].value, source: dw[wi].manual ? "manual" : "forward" };
+  }
+  return { value: data.density ?? "", source: "master" };
+}
+
 function cellStyle(source, isStandard) {
-  if (source === "manual") return { background: LP.white, fontStyle: "normal", color: LP.textDark };
+  if (source === "manual") return { background: LP.white, fontStyle: "normal", color: LP.textDark, fontWeight: 700 };
   if (source === "forward") return { background: LP.cellAutoFill, fontStyle: "italic", color: LP.textMid };
   if (isStandard) return { background: "#d8f3dc", fontStyle: "normal", color: LP.forest };
   return { background: "#f0f0f0", fontStyle: "normal", color: LP.textLight };
@@ -41,16 +59,17 @@ function cellStyle(source, isStandard) {
 export default function CropMaster({ cropCycles, activities, cropMasterData, setCropMasterData, lpRole }) {
   const [selId, setSelId] = useState(() => cropCycles[0]?.id ?? null);
   const [isEditing, setIsEditing] = useState(false);
-  const [editCell, setEditCell] = useState(null); // { act, wi }
+  const [editCell, setEditCell] = useState(null); // { act, wi } — act can be "__density__"
   const isGM = lpRole === "gm";
 
   const crop = cropCycles.find(c => c.id === selId);
-  const data = cropMasterData.find(d => d.cropId === selId) ?? { cropId: selId, density: "", cells: {} };
+  const data = cropMasterData.find(d => d.cropId === selId)
+    ?? { cropId: selId, density: "", densityWeeks: null, cells: {} };
 
   const mutate = (fn) => {
     setCropMasterData(prev => {
       const idx = prev.findIndex(d => d.cropId === selId);
-      if (idx === -1) return [...prev, fn({ cropId: selId, density: "", cells: {} })];
+      if (idx === -1) return [...prev, fn({ cropId: selId, density: "", densityWeeks: null, cells: {} })];
       const next = [...prev];
       next[idx] = fn(next[idx]);
       return next;
@@ -60,9 +79,8 @@ export default function CropMaster({ cropCycles, activities, cropMasterData, set
   const setMasterRate = (act, field, val) => {
     mutate(d => {
       const cell = { ...(d.cells[act] ?? { h: "", t: "", weeks: null }), [field]: val };
-      // if not density-excluded, cascade master rate to all "master" sourced weeks
       if (!DENSITY_EXCLUDED.includes(act) && field === "h" && cell.weeks) {
-        cell.weeks = cell.weeks.map(w => (w == null || (!w.manual && w.source !== "forward")) ? null : w);
+        cell.weeks = cell.weeks.map(w => (w == null || !w.manual) ? null : w);
       }
       return { ...d, cells: { ...d.cells, [act]: cell } };
     });
@@ -83,6 +101,15 @@ export default function CropMaster({ cropCycles, activities, cropMasterData, set
     });
   };
 
+  const setDensityWeek = (wi, newValue) => {
+    mutate(d => ({
+      ...d,
+      densityWeeks: applyDensityFF(d.densityWeeks, crop.weeks, wi, newValue),
+    }));
+  };
+
+  const resetDensity = () => mutate(d => ({ ...d, densityWeeks: null }));
+
   const thS = {
     background: LP.forest, color: LP.white,
     padding: "9px 4px", fontSize: 10, fontWeight: 700,
@@ -94,7 +121,6 @@ export default function CropMaster({ cropCycles, activities, cropMasterData, set
   };
 
   const visibleActivities = activities.filter(a => !HIDDEN_FROM_CROP_MASTER.includes(a));
-
   const configuredCount = visibleActivities.filter(a => {
     const c = data.cells[a];
     return c?.h || c?.t;
@@ -129,6 +155,7 @@ export default function CropMaster({ cropCycles, activities, cropMasterData, set
                 <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</div>
                 <div style={{ fontSize: 10, color: "rgba(255,255,255,0.38)", marginTop: 2 }}>
                   {cnt ? `${cnt} activities set` : "Not configured"}
+                  {d?.density ? ` · ${d.density} pl/m²` : ""}
                 </div>
               </button>
             );
@@ -139,21 +166,11 @@ export default function CropMaster({ cropCycles, activities, cropMasterData, set
       {/* Right panel */}
       {crop ? (
         <div style={{ flex: 1, background: LP.cream, display: "flex", flexDirection: "column", border: `1px solid ${LP.border}`, borderLeft: "none", overflow: "hidden" }}>
-          {/* Header */}
-          <div style={{ padding: "13px 20px", background: LP.white, borderBottom: `1px solid ${LP.border}`, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+
+          {/* Header — no density field here anymore */}
+          <div style={{ padding: "13px 20px", background: LP.white, borderBottom: `1px solid ${LP.border}`, display: "flex", alignItems: "center", gap: 12 }}>
             <h2 style={{ margin: 0, flex: 1, fontSize: 19, color: LP.forest, fontFamily: "'Palatino Linotype', Georgia, serif", fontWeight: 700 }}>{crop.name}</h2>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: 13, color: LP.textMid }}>Plant density:</span>
-              {isEditing
-                ? <input type="number" min="0" step="0.1" value={data.density}
-                    onChange={e => mutate(d => ({ ...d, density: e.target.value }))}
-                    placeholder="plants/m²"
-                    style={{ ...lpInp, width: 120, padding: "6px 10px", minHeight: 36 }} />
-                : <span style={{ fontWeight: 700, color: LP.mid, fontSize: 16 }}>
-                    {data.density ? `${data.density} pl/m²` : <em style={{ color: LP.textLight, fontSize: 13, fontWeight: 400 }}>Not set</em>}
-                  </span>
-              }
-            </div>
+            <span style={{ fontSize: 12, color: LP.textLight }}>{configuredCount} of {visibleActivities.length} activities configured</span>
             {isGM && (
               <button onClick={() => { setIsEditing(v => !v); setEditCell(null); }}
                 style={{ ...lpBtn(isEditing, isEditing ? LP.amber : LP.mid), padding: "9px 20px" }}>
@@ -166,16 +183,17 @@ export default function CropMaster({ cropCycles, activities, cropMasterData, set
           <div style={{ padding: "7px 20px", background: "#EDF4EE", borderBottom: `1px solid ${LP.borderLight}`, display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
             <span style={{ fontSize: 11, fontWeight: 700, color: LP.textMid, textTransform: "uppercase" }}>Cell states:</span>
             {[
-              { bg: "#d8f3dc", label: "Standard week (active in cycle)", style: "normal" },
-              { bg: "#f0f0f0", label: "Non-standard week", style: "normal" },
-              { bg: LP.cellAutoFill, label: "Auto-filled (forward-propagated)", style: "italic" },
-              { bg: LP.white, label: "Manually entered", style: "normal", border: `1px solid ${LP.border}` },
-            ].map(({ bg, label, style, border }) => (
+              { bg: "#d8f3dc", label: "Standard week (active in cycle)" },
+              { bg: "#f0f0f0", label: "Non-standard week" },
+              { bg: LP.cellAutoFill, label: "Auto-filled / forward-propagated", italic: true },
+              { bg: LP.white, label: "Manually entered", bold: true, border: `1px solid ${LP.border}` },
+            ].map(({ bg, label, italic, bold, border }) => (
               <span key={label} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: LP.textMid }}>
-                <span style={{ width: 14, height: 14, background: bg, border: border || "1px solid rgba(0,0,0,0.08)", borderRadius: 2, display: "inline-block" }} />
-                <em style={{ fontStyle: style }}>{label}</em>
+                <span style={{ width: 14, height: 14, background: bg, border: border || "1px solid rgba(0,0,0,0.08)", borderRadius: 2, display: "inline-block", flexShrink: 0 }} />
+                <span style={{ fontStyle: italic ? "italic" : "normal", fontWeight: bold ? 700 : 400 }}>{label}</span>
               </span>
             ))}
+            <span style={{ fontSize: 11, color: LP.amber }}>★ = follows own master, not density-adjusted</span>
           </div>
 
           {/* Grid */}
@@ -185,7 +203,9 @@ export default function CropMaster({ cropCycles, activities, cropMasterData, set
                 <col style={{ width: 190 }} />
                 <col style={{ width: 72 }} />
                 <col style={{ width: 72 }} />
-                {Array.from({ length: crop.weeks }, (_, i) => <col key={i} style={{ width: 56, minWidth: 56 }} />)}
+                {Array.from({ length: crop.weeks }, () => null).map((_, i) => (
+                  <col key={i} style={{ width: 56, minWidth: 56 }} />
+                ))}
                 <col style={{ width: 80 }} />
               </colgroup>
               <thead>
@@ -200,10 +220,94 @@ export default function CropMaster({ cropCycles, activities, cropMasterData, set
                 </tr>
               </thead>
               <tbody>
+
+                {/* ── DENSITY ROW (first) ── */}
+                <tr>
+                  <td style={{
+                    position: "sticky", left: 0, zIndex: 1,
+                    background: "#fff8e7",
+                    padding: "0 10px", fontSize: 12,
+                    color: LP.amber, fontWeight: 700,
+                    borderRight: `2px solid ${LP.border}`,
+                    borderBottom: `2px solid ${LP.amber}`,
+                    height: 44, verticalAlign: "middle",
+                    whiteSpace: "nowrap",
+                    boxShadow: "2px 0 4px rgba(0,0,0,0.05)",
+                  }}>
+                    Density (pl/m²)
+                  </td>
+
+                  {/* Master density value */}
+                  <td style={{ textAlign: "center", background: "#fff8e7", borderBottom: `2px solid ${LP.amber}`, padding: "4px" }}>
+                    {isEditing
+                      ? <input type="number" min="0" step="0.1"
+                          value={data.density ?? ""}
+                          onChange={e => mutate(d => ({ ...d, density: e.target.value }))}
+                          style={{ width: 56, padding: "4px", border: `1px solid ${LP.amber}`, borderRadius: 4, fontSize: 11, textAlign: "center", fontFamily: "inherit" }} />
+                      : <span style={{ fontSize: 12, fontWeight: data.density ? 700 : 400, color: data.density ? LP.amber : LP.textLight }}>
+                          {data.density || "–"}
+                        </span>
+                    }
+                  </td>
+
+                  {/* Empty second master col */}
+                  <td style={{ background: "#fff8e7", borderBottom: `2px solid ${LP.amber}` }} />
+
+                  {/* Per-week density cells */}
+                  {Array.from({ length: crop.weeks }, (_, wi) => {
+                    const dv = getDensityForWeek(data, wi);
+                    const bg = dv.source === "manual" ? LP.white : LP.cellAutoFill;
+                    const isActive = editCell?.act === "__density__" && editCell?.wi === wi && isEditing;
+                    return (
+                      <td key={wi}
+                        onClick={() => isEditing && setEditCell(isActive ? null : { act: "__density__", wi })}
+                        style={{
+                          width: 56, height: 44,
+                          background: isActive ? LP.white : bg,
+                          borderLeft: "1px solid rgba(0,0,0,0.06)",
+                          borderBottom: `2px solid ${LP.amber}`,
+                          cursor: isEditing ? "pointer" : "default",
+                          verticalAlign: "middle", textAlign: "center",
+                          outline: isActive ? `2px solid ${LP.amber}` : "none",
+                        }}>
+                        {isActive ? (
+                          <input type="number" min="0" step="0.1"
+                            autoFocus
+                            defaultValue={dv.value}
+                            onBlur={e => { setDensityWeek(wi, e.target.value); setEditCell(null); }}
+                            style={{ width: "90%", padding: "3px 2px", border: `1px solid ${LP.amber}`, borderRadius: 3, fontSize: 11, textAlign: "center", fontFamily: "inherit" }} />
+                        ) : (
+                          <span style={{
+                            fontSize: 11,
+                            fontWeight: dv.source === "manual" ? 700 : 400,
+                            color: dv.source === "manual" ? LP.amber : LP.textMid,
+                            fontStyle: dv.source === "forward" ? "italic" : "normal",
+                          }}>
+                            {dv.value || "–"}
+                          </span>
+                        )}
+                      </td>
+                    );
+                  })}
+
+                  {/* Reset density */}
+                  <td style={{ textAlign: "center", background: "#fff8e7", borderBottom: `2px solid ${LP.amber}`, padding: "4px" }}>
+                    {isEditing && data.densityWeeks && (
+                      <button onClick={resetDensity} title="Reset all weeks to master density"
+                        style={{ background: "none", border: `1px solid ${LP.amber}`, borderRadius: 4, cursor: "pointer", color: LP.amber, fontSize: 10, padding: "3px 6px", fontFamily: "inherit" }}>
+                        ↺ reset
+                      </button>
+                    )}
+                  </td>
+                </tr>
+
+                {/* ── ACTIVITY ROWS ── */}
                 {visibleActivities.map((act, ai) => {
                   const actCell = getCell(data.cells, act);
                   const excluded = DENSITY_EXCLUDED.includes(act);
                   const rowBg = ai % 2 === 0 ? LP.white : "#F5F8F5";
+                  const masterDensity = parseFloat(data.density) || 0;
+
                   return (
                     <tr key={act}>
                       <td style={{
@@ -212,36 +316,55 @@ export default function CropMaster({ cropCycles, activities, cropMasterData, set
                         color: LP.textDark, fontWeight: 500,
                         borderRight: `2px solid ${LP.border}`,
                         borderBottom: `1px solid ${LP.borderLight}`,
+                        borderLeft: excluded ? `3px solid ${LP.amber}` : "none",
                         height: 44, verticalAlign: "middle",
                         whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
                         maxWidth: 190, boxShadow: "2px 0 4px rgba(0,0,0,0.05)",
                       }}>
-                        {excluded && <span title="Excluded from density cascade" style={{ color: LP.amber, fontSize: 9, marginRight: 4 }}>★</span>}
+                        {excluded && (
+                          <span title="Follows own master — not density-adjusted" style={{ color: LP.amber, fontSize: 9, marginRight: 4 }}>★</span>
+                        )}
                         {act}
                       </td>
-                      {/* Master rate inputs */}
-                      <td style={{ textAlign: "center", background: rowBg, borderBottom: `1px solid ${LP.borderLight}`, padding: "4px 4px" }}>
+
+                      {/* Master hrs/m² */}
+                      <td style={{ textAlign: "center", background: rowBg, borderBottom: `1px solid ${LP.borderLight}`, padding: "4px" }}>
                         {isEditing
                           ? <input type="number" min="0" step="0.01" value={actCell.h}
                               onChange={e => setMasterRate(act, "h", e.target.value)}
-                              style={{ width: 56, padding: "4px 4px", border: `1px solid ${LP.border}`, borderRadius: 4, fontSize: 11, textAlign: "center", fontFamily: "inherit" }} />
+                              style={{ width: 56, padding: "4px", border: `1px solid ${LP.border}`, borderRadius: 4, fontSize: 11, textAlign: "center", fontFamily: "inherit" }} />
                           : <span style={{ fontSize: 12, fontWeight: actCell.h ? 700 : 400, color: actCell.h ? LP.textDark : LP.textLight }}>{actCell.h || "–"}</span>
                         }
                       </td>
-                      <td style={{ textAlign: "center", background: rowBg, borderBottom: `1px solid ${LP.borderLight}`, padding: "4px 4px" }}>
+
+                      {/* Master ×/wk */}
+                      <td style={{ textAlign: "center", background: rowBg, borderBottom: `1px solid ${LP.borderLight}`, padding: "4px" }}>
                         {isEditing
                           ? <input type="number" min="0" step="1" value={actCell.t}
                               onChange={e => setMasterRate(act, "t", e.target.value)}
-                              style={{ width: 48, padding: "4px 4px", border: `1px solid ${LP.border}`, borderRadius: 4, fontSize: 11, textAlign: "center", fontFamily: "inherit" }} />
+                              style={{ width: 48, padding: "4px", border: `1px solid ${LP.border}`, borderRadius: 4, fontSize: 11, textAlign: "center", fontFamily: "inherit" }} />
                           : <span style={{ fontSize: 12, fontWeight: actCell.t ? 700 : 400, color: actCell.t ? LP.textDark : LP.textLight }}>{actCell.t || "–"}</span>
                         }
                       </td>
+
                       {/* Week cells */}
                       {Array.from({ length: crop.weeks }, (_, wi) => {
                         const isStd = isTicked(crop, act, wi);
                         const eff = getEffective(actCell, wi);
+
+                        // Density-adjusted display value (non-excluded, non-manual cells only)
+                        let displayH = eff.h;
+                        if (!excluded && eff.source !== "manual" && masterDensity > 0 && eff.h) {
+                          const weekD = getDensityForWeek(data, wi);
+                          const wkDensity = parseFloat(weekD.value) || masterDensity;
+                          if (wkDensity !== masterDensity) {
+                            displayH = (parseFloat(eff.h) * (wkDensity / masterDensity)).toFixed(3);
+                          }
+                        }
+
                         const cs = cellStyle(eff.source, isStd);
                         const isActive = editCell?.act === act && editCell?.wi === wi && isEditing;
+
                         return (
                           <td key={wi}
                             onClick={() => isEditing && setEditCell(isActive ? null : { act, wi })}
@@ -260,24 +383,27 @@ export default function CropMaster({ cropCycles, activities, cropMasterData, set
                                   autoFocus
                                   defaultValue={eff.h}
                                   onBlur={e => setWeekCell(act, wi, e.target.value, eff.t)}
-                                  style={{ width: "100%", padding: "2px 2px", border: `1px solid ${LP.mid}`, borderRadius: 3, fontSize: 10, textAlign: "center", fontFamily: "inherit" }} />
+                                  style={{ width: "100%", padding: "2px", border: `1px solid ${LP.mid}`, borderRadius: 3, fontSize: 10, textAlign: "center", fontFamily: "inherit" }} />
                                 <input type="number" min="0" step="1"
                                   defaultValue={eff.t}
                                   onBlur={e => setWeekCell(act, wi, eff.h, e.target.value)}
-                                  style={{ width: "100%", padding: "2px 2px", border: `1px solid ${LP.mid}`, borderRadius: 3, fontSize: 10, textAlign: "center", fontFamily: "inherit" }} />
+                                  style={{ width: "100%", padding: "2px", border: `1px solid ${LP.mid}`, borderRadius: 3, fontSize: 10, textAlign: "center", fontFamily: "inherit" }} />
                               </div>
                             ) : (
                               <div style={{ fontSize: 10, lineHeight: 1.3 }}>
                                 <div style={{ color: cs.color, fontStyle: cs.fontStyle, fontWeight: eff.source === "manual" ? 700 : 400 }}>
-                                  {eff.h || (isStd ? "·" : "")}
+                                  {displayH || (isStd ? "·" : "")}
                                 </div>
-                                {eff.t && <div style={{ color: LP.textLight, fontSize: 9, fontStyle: cs.fontStyle }}>×{eff.t}</div>}
+                                {eff.t && (
+                                  <div style={{ color: LP.textLight, fontSize: 9, fontStyle: cs.fontStyle }}>×{eff.t}</div>
+                                )}
                               </div>
                             )}
                           </td>
                         );
                       })}
-                      {/* Reset button */}
+
+                      {/* Reset row */}
                       <td style={{ textAlign: "center", background: rowBg, borderBottom: `1px solid ${LP.borderLight}`, padding: "4px" }}>
                         {isEditing && actCell.weeks && (
                           <button onClick={() => resetToMaster(act)} title="Reset all week overrides to master"
@@ -294,7 +420,7 @@ export default function CropMaster({ cropCycles, activities, cropMasterData, set
           </div>
 
           <div style={{ padding: "8px 20px", background: LP.white, borderTop: `1px solid ${LP.borderLight}`, fontSize: 11, color: LP.textLight }}>
-            ★ = Picking &amp; Pollination are excluded from density cascade · {configuredCount} of {activities.length} activities configured
+            {configuredCount} of {visibleActivities.length} activities configured · Click a week cell to edit that week and forward-fill
           </div>
         </div>
       ) : (

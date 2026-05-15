@@ -67,7 +67,7 @@ export default function LabourPlanner({ lpRole: initRole }) {
   useEffect(() => {
     setCropMasterData(prev => {
       const map = Object.fromEntries(prev.map(d => [d.cropId, d]));
-      return cropCycles.map(c => map[c.id] ?? { cropId: c.id, density: "", cells: {} });
+      return cropCycles.map(c => map[c.id] ?? { cropId: c.id, density: "", densityWeeks: null, cells: {} });
     });
     setPickingData(prev => {
       const map = Object.fromEntries(prev.map(d => [d.cropId, d]));
