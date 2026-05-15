@@ -5,6 +5,13 @@ import os
 import httpx
 from datetime import datetime, timezone, timedelta
 
+try:
+    from ortools.sat.python import cp_model as _cpsat
+    CPSAT_AVAILABLE = True
+except ImportError:
+    CPSAT_AVAILABLE = False
+    _cpsat = None
+
 app = FastAPI()
 
 app.add_middleware(
@@ -797,6 +804,379 @@ def reoptimise(payload: dict):
     except Exception as e:
         import traceback
         return {"error": str(e), "trace": traceback.format_exc()}
+
+# ---------------------------------------------------------------------------
+# CP-SAT Scheduler — proper global optimisation using OR-Tools
+# ---------------------------------------------------------------------------
+SCHED_SCALE = 10  # 1 unit = 0.1 hrs; avoids floating-point in CP model
+
+def run_cpsat_scheduler(daily_demand, staff, absences, clusters, cluster_transitions,
+                         quarantine=None, current_date_str=None, gh_crops_map=None,
+                         time_limit_secs=10):
+    """
+    daily_demand : {gh_name: {activity: {day_name: hours}}}
+    Returns      : (assignments, summary)
+    assignments  : [{staffId, staffName, greenhouse, activity, day, hours,
+                     transitionMins, unassigned}]
+    """
+    if not CPSAT_AVAILABLE or not daily_demand:
+        return _greedy_daily_scheduler(daily_demand, staff, absences, clusters,
+                                        cluster_transitions, quarantine,
+                                        current_date_str, gh_crops_map)
+
+    DAYS_ORDER = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
+    S = SCHED_SCALE
+    model = _cpsat.CpModel()
+
+    cluster_map, _ = build_cluster_map(clusters)
+    qmap = build_quarantine_map(quarantine, current_date_str) if quarantine and current_date_str else {}
+    gh_crops = gh_crops_map or {}
+
+    # Active days: days that have non-zero demand
+    active_days = sorted(
+        {d for acts in daily_demand.values()
+           for days_d in acts.values()
+           for d, h in days_d.items() if h > 0 and d in DAYS_ORDER},
+        key=lambda d: DAYS_ORDER.index(d)
+    )
+    if not active_days:
+        return [], {"quality": "no_demand", "totalDemand": 0}
+
+    availability = build_staff_availability(staff, absences, active_days)
+    staff_by_id  = {s["id"]: s for s in staff}
+    all_ghs  = list(daily_demand.keys())
+    all_acts = sorted({a for acts in daily_demand.values() for a in acts})
+    all_crops_flat = list({c for crops in gh_crops.values() for c in crops})
+
+    # Pre-compute 3-way eligibility (activity × gh × crop)
+    elig = {}
+    for s in staff:
+        sid = s["id"]
+        for gh in all_ghs:
+            crops = gh_crops.get(gh, [])
+            for act in all_acts:
+                elig[(sid, gh, act)] = staff_eligible_for_task(s, act, gh, crops)
+
+    # ── Decision variables: x[(sid, gh, act, day)] in units of 0.1 hr ──
+    x = {}
+    for s in staff:
+        sid = s["id"]
+        for gh, acts_d in daily_demand.items():
+            for act, days_d in acts_d.items():
+                if not elig.get((sid, gh, act), False):
+                    continue
+                if sid in qmap and gh not in qmap[sid]:
+                    continue
+                for day in active_days:
+                    if availability[sid][day] <= 0:
+                        continue
+                    if days_d.get(day, 0) <= 0:
+                        continue
+                    cap = int(availability[sid][day] * S)
+                    x[(sid, gh, act, day)] = model.NewIntVar(0, cap, f"x_{len(x)}")
+
+    # ── Hard: daily capacity ──
+    for s in staff:
+        sid = s["id"]
+        for day in active_days:
+            cap = int(availability[sid][day] * S)
+            if cap <= 0:
+                continue
+            vs = [v for (si, g, a, d), v in x.items() if si == sid and d == day]
+            if vs:
+                model.Add(sum(vs) <= cap)
+
+    # ── Hard: weekly cap = contracted + OT limit ──
+    for s in staff:
+        sid = s["id"]
+        contracted = sum(s.get("dayHours", {}).get(d, 0) for d in DAYS_ORDER)
+        weekly_cap = int((contracted + s.get("overtimeLimit", 30)) * S)
+        vs = [v for (si, g, a, d), v in x.items() if si == sid]
+        if vs:
+            model.Add(sum(vs) <= weekly_cap)
+
+    obj = []
+
+    # ── Soft 1: unmet demand — weight 1000 (highest) ──
+    unmet_vars = {}
+    for gh, acts_d in daily_demand.items():
+        for act, days_d in acts_d.items():
+            for day, hrs in days_d.items():
+                if hrs <= 0 or day not in active_days:
+                    continue
+                dem_s = int(hrs * S)
+                assigned = [v for (si, g, a, d), v in x.items()
+                            if g == gh and a == act and d == day]
+                uv = model.NewIntVar(0, dem_s, f"unmet_{len(unmet_vars)}")
+                model.Add(uv >= 0)
+                if assigned:
+                    model.Add(uv >= dem_s - sum(assigned))
+                else:
+                    model.Add(uv == dem_s)
+                unmet_vars[(gh, act, day)] = uv
+                obj.append(1000 * uv)
+
+    # ── Soft 2: overtime — weight 50 ──
+    ot_vars = {}
+    for s in staff:
+        sid = s["id"]
+        contracted_s = int(sum(s.get("dayHours", {}).get(d, 0) for d in DAYS_ORDER) * S)
+        ot_cap = int(s.get("overtimeLimit", 30) * S)
+        vs = [v for (si, g, a, d), v in x.items() if si == sid]
+        if vs:
+            ov = model.NewIntVar(0, ot_cap, f"ot_{len(ot_vars)}")
+            model.Add(ov >= sum(vs) - contracted_s)
+            model.Add(ov >= 0)
+            ot_vars[sid] = ov
+            obj.append(50 * ov)
+
+    # ── Soft 3: GH consistency — penalise each extra GH per staff per week (weight 30) ──
+    extra_gh_vars = {}
+    for s in staff:
+        sid = s["id"]
+        sghs = sorted({gh for (si, gh, a, d) in x if si == sid})
+        if len(sghs) < 2:
+            continue
+        gh_bools = []
+        for gh in sghs:
+            bv = model.NewBoolVar(f"ughw_{len(extra_gh_vars)}_{gh[:4]}")
+            vs = [v for (si, g, a, d), v in x.items() if si == sid and g == gh]
+            model.Add(sum(vs) >= 1).OnlyEnforceIf(bv)
+            model.Add(sum(vs) == 0).OnlyEnforceIf(bv.Not())
+            gh_bools.append(bv)
+        ev = model.NewIntVar(0, len(sghs) - 1, f"exgh_{len(extra_gh_vars)}")
+        model.Add(ev >= sum(gh_bools) - 1)
+        model.Add(ev >= 0)
+        extra_gh_vars[sid] = ev
+        obj.append(30 * S * ev)
+
+    # ── Soft 4: cross-cluster travel penalty within a day ──
+    for s in staff:
+        sid = s["id"]
+        for day in active_days:
+            dghs = sorted({gh for (si, gh, a, d) in x if si == sid and d == day})
+            if len(dghs) < 2:
+                continue
+            bvd = {}
+            for gh in dghs:
+                bv = model.NewBoolVar(f"ingd_{len(bvd)}")
+                vs = [v for (si, g, a, d), v in x.items() if si == sid and g == gh and d == day]
+                model.Add(sum(vs) >= 1).OnlyEnforceIf(bv)
+                model.Add(sum(vs) == 0).OnlyEnforceIf(bv.Not())
+                bvd[gh] = bv
+            pairs = [(g1, g2) for i, g1 in enumerate(dghs)
+                     for g2 in dghs[i+1:]]
+            for g1, g2 in pairs:
+                trans = transition_minutes(g1, g2, cluster_map, cluster_transitions)
+                if trans <= 0:
+                    continue
+                both = model.NewBoolVar(f"mv_{len(obj)}")
+                model.AddBoolAnd([bvd[g1], bvd[g2]]).OnlyEnforceIf(both)
+                model.AddBoolOr([bvd[g1].Not(), bvd[g2].Not()]).OnlyEnforceIf(both.Not())
+                obj.append(int(trans / 60.0 * S) * both)
+
+    if obj:
+        model.Minimize(sum(obj))
+
+    # ── Greedy warmstart — gives CP-SAT a head start ──
+    gw_used = {(s["id"], d): 0.0 for s in staff for d in active_days}
+    for s in sorted(staff, key=lambda s: -calc_versatility_full(
+            s, all_acts, all_ghs, all_crops_flat)):
+        sid = s["id"]
+        for gh, acts_d in daily_demand.items():
+            for act, days_d in acts_d.items():
+                for day, hrs in days_d.items():
+                    if (sid, gh, act, day) not in x:
+                        continue
+                    avail = availability[sid][day] - gw_used[(sid, day)]
+                    if avail <= 0:
+                        continue
+                    hint = int(min(hrs, avail) * S)
+                    model.AddHint(x[(sid, gh, act, day)], hint)
+                    gw_used[(sid, day)] += hint / S
+
+    # ── Solve ──
+    solver = _cpsat.CpSolver()
+    solver.parameters.max_time_in_seconds = time_limit_secs
+    solver.parameters.num_search_workers = 4
+    solver.parameters.log_search_progress = False
+    status = solver.Solve(model)
+
+    QUAL = {4: "optimal", 2: "feasible", 3: "infeasible", 0: "unknown", 5: "timeout"}
+    quality = QUAL.get(status, "unknown")
+
+    assignments = []
+    if status in (_cpsat.OPTIMAL, _cpsat.FEASIBLE):
+        for (sid, gh, act, day), var in x.items():
+            val = solver.Value(var)
+            if val <= 0:
+                continue
+            assignments.append({
+                "staffId": sid, "staffName": staff_by_id[sid]["name"],
+                "greenhouse": gh, "activity": act, "day": day,
+                "hours": round(val / S, 1),
+                "transitionMins": 0, "unassigned": False,
+            })
+        for (gh, act, day), uv in unmet_vars.items():
+            uval = solver.Value(uv)
+            if uval > 0:
+                assignments.append({
+                    "staffId": "UNASSIGNED",
+                    "staffName": f"{round(uval/S,1)}h unassigned",
+                    "greenhouse": gh, "activity": act, "day": day,
+                    "hours": round(uval / S, 1),
+                    "transitionMins": 0, "unassigned": True,
+                })
+        # Compute actual transition minutes post-solve
+        order = {}
+        for a in [r for r in assignments if not r["unassigned"]]:
+            k = (a["staffId"], a["day"])
+            if k not in order:
+                order[k] = []
+            if a["greenhouse"] not in order[k]:
+                order[k].append(a["greenhouse"])
+        for a in assignments:
+            if a["unassigned"]:
+                continue
+            k = (a["staffId"], a["day"])
+            ghs = order.get(k, [])
+            idx = ghs.index(a["greenhouse"]) if a["greenhouse"] in ghs else 0
+            if idx > 0:
+                a["transitionMins"] = transition_minutes(
+                    ghs[idx-1], a["greenhouse"], cluster_map, cluster_transitions)
+
+        ot_total = sum(solver.Value(v) for v in ot_vars.values()) / S
+        n_multi = sum(1 for sid, ev in extra_gh_vars.items() if solver.Value(ev) > 0)
+    else:
+        # CP-SAT found nothing — fall back to greedy
+        return _greedy_daily_scheduler(daily_demand, staff, absences, clusters,
+                                        cluster_transitions, quarantine,
+                                        current_date_str, gh_crops_map)
+
+    total_demand = sum(h for acts in daily_demand.values()
+                        for days_d in acts.values()
+                        for h in days_d.values() if h > 0)
+    total_assigned = sum(a["hours"] for a in assignments if not a.get("unassigned"))
+    total_unmet    = sum(a["hours"] for a in assignments if a.get("unassigned"))
+
+    summary = {
+        "quality": quality,
+        "wallTime": round(solver.WallTime(), 2),
+        "totalDemand": round(total_demand, 1),
+        "totalAssigned": round(total_assigned, 1),
+        "totalUnmet": round(total_unmet, 1),
+        "coverageRate": round(total_assigned / total_demand * 100, 1) if total_demand > 0 else 0,
+        "otHours": round(ot_total, 1),
+        "staffMultiGH": n_multi,
+        "objectiveValue": solver.ObjectiveValue(),
+        "solver": "cpsat",
+    }
+    return assignments, summary
+
+
+def _greedy_daily_scheduler(daily_demand, staff, absences, clusters,
+                              cluster_transitions, quarantine=None,
+                              current_date_str=None, gh_crops_map=None):
+    """Greedy fallback — also used as warmstart hint for CP-SAT."""
+    DAYS_ORDER = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
+    cluster_map, _ = build_cluster_map(clusters)
+    qmap = build_quarantine_map(quarantine, current_date_str) if quarantine and current_date_str else {}
+    gh_crops = gh_crops_map or {}
+    active_days = sorted(
+        {d for acts in daily_demand.values() for days_d in acts.values()
+           for d, h in days_d.items() if h > 0 and d in DAYS_ORDER},
+        key=lambda d: DAYS_ORDER.index(d)
+    )
+    if not active_days:
+        return [], {"quality": "no_demand"}
+
+    availability = build_staff_availability(staff, absences, active_days)
+    all_ghs  = list(daily_demand.keys())
+    all_acts = sorted({a for acts in daily_demand.values() for a in acts})
+    all_crops = list({c for crops in gh_crops.values() for c in crops})
+    staff_sorted = sorted(staff,
+        key=lambda s: -calc_versatility_full(s, all_acts, all_ghs, all_crops))
+    used     = {(s["id"], d): 0.0 for s in staff for d in active_days}
+    sdgh     = {(s["id"], d): None for s in staff for d in active_days}
+    result   = []
+
+    for gh, acts_d in daily_demand.items():
+        for act, days_d in acts_d.items():
+            for day, hrs in days_d.items():
+                if hrs <= 0 or day not in active_days:
+                    continue
+                rem = float(hrs)
+                for s in staff_sorted:
+                    if rem <= 0:
+                        break
+                    sid = s["id"]
+                    if not staff_eligible_for_task(s, act, gh, gh_crops.get(gh, [])):
+                        continue
+                    if sid in qmap and gh not in qmap[sid]:
+                        continue
+                    avail = availability[sid][day] - used[(sid, day)]
+                    if avail <= 0:
+                        continue
+                    cur_gh = sdgh[(sid, day)]
+                    trans = transition_minutes(cur_gh, gh, cluster_map, cluster_transitions) if cur_gh and cur_gh != gh else 0
+                    avail -= trans / 60.0
+                    if avail <= 0:
+                        continue
+                    assign = min(rem, avail)
+                    used[(sid, day)] += assign + trans / 60.0
+                    sdgh[(sid, day)] = gh
+                    result.append({
+                        "staffId": sid, "staffName": s["name"],
+                        "greenhouse": gh, "activity": act, "day": day,
+                        "hours": round(assign, 1), "transitionMins": trans,
+                        "unassigned": False,
+                    })
+                    rem -= assign
+                if rem > 0.05:
+                    result.append({
+                        "staffId": "UNASSIGNED", "staffName": f"{round(rem,1)}h unassigned",
+                        "greenhouse": gh, "activity": act, "day": day,
+                        "hours": round(rem, 1), "transitionMins": 0,
+                        "unassigned": True,
+                    })
+
+    total_d = sum(h for acts in daily_demand.values() for dd in acts.values() for h in dd.values() if h > 0)
+    total_a = sum(r["hours"] for r in result if not r.get("unassigned"))
+    total_u = sum(r["hours"] for r in result if r.get("unassigned"))
+    return result, {
+        "quality": "greedy", "solver": "greedy_fallback",
+        "totalDemand": round(total_d,1), "totalAssigned": round(total_a,1),
+        "totalUnmet": round(total_u,1),
+        "coverageRate": round(total_a/total_d*100,1) if total_d > 0 else 0,
+        "otHours": 0,
+    }
+
+
+@app.post("/schedule/optimise")
+def schedule_optimise(payload: dict):
+    """
+    CP-SAT based staff scheduling endpoint.
+    payload: {dailyDemand, staff, absences, clusters, clusterTransitions,
+               quarantine, currentDate, ghCropsMap, timeLimitSecs}
+    """
+    try:
+        assignments, summary = run_cpsat_scheduler(
+            daily_demand       = payload.get("dailyDemand", {}),
+            staff              = [migrate_staff(s) for s in payload.get("staff", [])],
+            absences           = payload.get("absences", {}),
+            clusters           = payload.get("clusters", []),
+            cluster_transitions= payload.get("clusterTransitions", {}),
+            quarantine         = payload.get("quarantine", []),
+            current_date_str   = payload.get("currentDate", adelaide_now()),
+            gh_crops_map       = payload.get("ghCropsMap", {}),
+            time_limit_secs    = payload.get("timeLimitSecs", 10),
+        )
+        return {"assignments": assignments, "summary": summary}
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "trace": traceback.format_exc(),
+                "assignments": [], "summary": {}}
+
 
 # ---------------------------------------------------------------------------
 # OT eligibility check endpoint

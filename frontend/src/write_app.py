@@ -71,6 +71,7 @@ export default function App() {
   const [wsHolidays,setWsHolidays]=useState(()=>{try{return JSON.parse(localStorage.getItem("ws_holidays_v1"))||[];}catch{return [];}});
   const [dailyAllocation,setDailyAllocation]=useState(()=>{try{return JSON.parse(localStorage.getItem("ws_daily_alloc_v1"))||{};}catch{return {};}});
   const [confirmedWeeks,setConfirmedWeeks]=useState(()=>{try{return JSON.parse(localStorage.getItem("ws_confirmed_weeks_v1"))||{};}catch{return {};}});
+  const [scheduleData,setScheduleData]=useState(()=>{try{return JSON.parse(localStorage.getItem("ws_schedule_v1"))||{};}catch{return {};}});
 
   useEffect(()=>{
     const tick=()=>setAdelaideTime(new Date().toLocaleString("en-AU",{timeZone:"Australia/Adelaide",weekday:"short",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:true}));
@@ -100,6 +101,7 @@ export default function App() {
   useEffect(()=>{localStorage.setItem("ws_holidays_v1",JSON.stringify(wsHolidays));},[wsHolidays]);
   useEffect(()=>{localStorage.setItem("ws_daily_alloc_v1",JSON.stringify(dailyAllocation));},[dailyAllocation]);
   useEffect(()=>{localStorage.setItem("ws_confirmed_weeks_v1",JSON.stringify(confirmedWeeks));},[confirmedWeeks]);
+  useEffect(()=>{localStorage.setItem("ws_schedule_v1",JSON.stringify(scheduleData));},[scheduleData]);
 
   const normaliseGH=(gh)=>{if(typeof gh==="string")return{id:gh,name:gh,cropTypes:[]};return{id:gh.id||gh.name||"",name:gh.name||gh.id||"",cropTypes:gh.cropTypes||[]};};
   const ghList=greenhouses.map(normaliseGH);
@@ -632,56 +634,13 @@ export default function App() {
 
         {/* ══ SCHEDULE ══ */}
         {page==="schedule"&&(
-          <div>
-            <h2 style={{color:C.navy,marginBottom:"4px"}}>📅 Schedule</h2>
-            {activeWeek&&<p style={{color:C.textMid,fontSize:"13px",marginBottom:"16px"}}>Week {activeWeekIndex+1}: {fmtDate(activeWeek.startDate)} — {fmtDate(addDays(activeWeek.startDate,6))}</p>}
-            {!schedule?(<div style={card}><p style={{color:C.textLight}}>No schedule yet. Go to Demand and click Generate.</p></div>):(
-              <div>
-                {scheduleSummary&&(
-                  <div style={{...card,background:"#eafaf1",padding:"14px",marginBottom:"14px"}}>
-                    <div style={{display:"flex",gap:"20px",flexWrap:"wrap",fontSize:"13px",alignItems:"center"}}>
-                      <span>✅ <strong>Regular:</strong> {scheduleSummary.totalAssigned}h</span>
-                      {scheduleSummary.totalOTHours>0&&<span style={{color:C.orange}}>⏱️ <strong>OT:</strong> {scheduleSummary.totalOTHours}h ({scheduleSummary.otStaffCount} staff)</span>}
-                      <span style={{color:scheduleSummary.totalUnassigned>0?C.red:C.green}}>{scheduleSummary.totalUnassigned>0?"⚠️":"✓"} <strong>Unassigned:</strong> {scheduleSummary.totalUnassigned}h</span>
-                      <span>📊 <strong>Demand:</strong> {scheduleSummary.totalDemand}h</span>
-                      {efficiencyScore!=null&&role==="gm"&&<span style={{color:efficiencyScore>=80?C.green:C.gold,fontWeight:"700"}}>📊 Efficiency: {efficiencyScore}%</span>}
-                      {scheduleSummary.generatedAt&&<span style={{color:C.textLight,fontSize:"11px",marginLeft:"auto"}}>Generated: {fmtISOReadable(scheduleSummary.generatedAt)}</span>}
-                    </div>
-                  </div>
-                )}
-                {Object.entries(schedule).map(([day,assignments])=>{
-                  const dateStr=activeWeekDates[day]?` — ${fmtDateShort(activeWeekDates[day])}`:"";
-                  return(
-                    <div key={day} style={card}>
-                      <h3 style={{color:C.navy,marginBottom:"10px",fontSize:"15px"}}>
-                        {day}<span style={{color:C.teal,fontWeight:"600"}}>{dateStr}</span>
-                        <span style={{fontWeight:"400",color:C.textMid,fontSize:"13px",marginLeft:"8px"}}>— {assignments.filter(x=>!x.unassigned).length} assignments</span>
-                        {assignments.filter(x=>x.unassigned).length>0&&<span style={{color:C.red,fontSize:"13px"}}> | ⚠️ {assignments.filter(x=>x.unassigned).length} unassigned</span>}
-                      </h3>
-                      {!assignments.length?<p style={{color:C.textLight,fontSize:"13px"}}>No assignments</p>:(
-                        <table style={{width:"100%",borderCollapse:"collapse",fontSize:"13px"}}>
-                          <thead><tr><TH>Staff ID</TH><TH>Name</TH><TH>Greenhouse</TH><TH>Activity</TH><TH>Crop Type</TH><TH center>Hours</TH><TH center>Transit</TH></tr></thead>
-                          <tbody>
-                            {assignments.map((a,i)=>(
-                              <tr key={i} style={{background:a.unassigned?"#fde8e8":a.isOT?"#fff8ee":a.reoptimised?"#fffbea":i%2===0?C.light:C.white}}>
-                                <td style={{padding:"8px 10px",fontFamily:"monospace",color:a.unassigned?C.red:C.navy,fontSize:"12px"}}>{a.staffId}</td>
-                                <td style={{padding:"8px 10px",fontSize:"13px"}}>{a.unassigned?<span style={{color:C.red}}>⚠️ {a.staffName}</span>:<button onClick={()=>{const s=staff.find(x=>x.id===a.staffId);if(s)setSelectedStaff(s);}} style={{background:"none",border:"none",color:C.blue,cursor:"pointer",textDecoration:"underline",fontSize:"13px",padding:0}}>{a.staffName}</button>}{a.isOT&&<span style={{fontSize:"11px",color:C.orange,marginLeft:"6px",fontWeight:"700"}}>⏱️OT</span>}{a.reoptimised&&<span style={{fontSize:"11px",color:C.gold,marginLeft:"6px"}}>↻</span>}</td>
-                                <td style={{padding:"8px 10px"}}>{a.greenhouse}</td>
-                                <td style={{padding:"8px 10px"}}>{a.activity}</td>
-                                <td style={{padding:"8px 10px",fontSize:"12px",color:C.textMid}}>{a.cropType||"—"}</td>
-                                <td style={{padding:"8px 10px",textAlign:"center"}}>{a.hours}h</td>
-                                <td style={{padding:"8px 10px",textAlign:"center",color:a.transitionMins>0?C.gold:C.textLight,fontSize:"12px"}}>{a.transitionMins>0?`${a.transitionMins}min`:"—"}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+          <SchedulePage
+            scheduleData={scheduleData} setScheduleData={setScheduleData}
+            dailyAllocation={dailyAllocation} confirmedWeeks={confirmedWeeks}
+            staff={staff} absences={absences}
+            clusters={clusters} clusterTransitions={clusterTransitions}
+            quarantine={quarantine}
+            role={role} btn={btn} inp={inp} card={card} C={C} API={API}/>
         )}
 
         {/* ══ ABSENCE ══ */}
@@ -906,6 +865,424 @@ function ClusterTransitionUI({clusters,setClusters,clusterTransitions,setCluster
         </div>
       )}
       {clusters.length===0&&<p style={{color:C.textLight,fontSize:"13px",margin:"8px 0 0 0"}}>No clusters defined. Add a cluster above.</p>}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SCHEDULE PAGE — three views (GH / Staff / Activity) over CP-SAT assignments
+// ═══════════════════════════════════════════════════════════════════════════════
+function SchedulePage({scheduleData,setScheduleData,dailyAllocation,confirmedWeeks,staff,absences,clusters,clusterTransitions,quarantine,role,btn,inp,card,C,API}){
+  const DAYS=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+  const DAY_S={Monday:"Mon",Tuesday:"Tue",Wednesday:"Wed",Thursday:"Thu",Friday:"Fri",Saturday:"Sat",Sunday:"Sun"};
+
+  const [schedTab,setSchedTab]=React.useState("gh");
+  const [selWeek,setSelWeek]=React.useState(null);
+  const [selGH,setSelGH]=React.useState(null);
+  const [selStaff,setSelStaff]=React.useState(null);
+  const [selAct,setSelAct]=React.useState(null);
+  const [running,setRunning]=React.useState(false);
+  const [overrides,setOverrides]=React.useState({});
+  const [editCell,setEditCell]=React.useState(null);
+
+  const addD=(iso,n)=>{const d=new Date(iso);d.setDate(d.getDate()+n);return d.toISOString().split("T")[0];};
+  const fmtD=(iso)=>{if(!iso)return"";const d=new Date(iso);return d.toLocaleDateString("en-AU",{day:"2-digit",month:"short"});};
+
+  // Load YDP plans + GH name map
+  const ydpPlans=React.useMemo(()=>{try{return JSON.parse(localStorage.getItem("ydp_plans_v1"))||[];}catch{return [];}});
+  const ghNameMap=React.useMemo(()=>{try{const lp=JSON.parse(localStorage.getItem("labourPlanner_v1"))||{};const m={};(lp.greenhouses||[]).forEach(gh=>{m[gh.id]=gh.name;});return m;}catch{return {};}});
+  const ghCropsMap=React.useMemo(()=>{
+    const m={};
+    ydpPlans.forEach(p=>{const n=ghNameMap[p.ghId]||p.ghId;if(!m[n])m[n]=[];if(p.cropName&&!m[n].includes(p.cropName))m[n].push(p.cropName);});
+    return m;
+  });
+
+  // Find calendar weeks that have confirmed demand
+  const confirmedCalWeeks=React.useMemo(()=>{
+    const ws=new Set();
+    ydpPlans.forEach(p=>{
+      for(let wi=0;wi<p.cycleWeeks;wi++){
+        if(confirmedWeeks[`${p.id}__w${wi}`]){ws.add(addD(p.startDate,wi*7));}
+      }
+    });
+    return Array.from(ws).sort();
+  },[confirmedWeeks,ydpPlans.length]);
+
+  // Auto-select first week
+  React.useEffect(()=>{
+    if(!selWeek&&confirmedCalWeeks.length>0)setSelWeek(confirmedCalWeeks[0]);
+  },[confirmedCalWeeks.length]);
+
+  // Aggregate daily demand for selected calendar week across all confirmed plans
+  const aggregateDemand=React.useCallback((weekStart)=>{
+    const demand={};const crops={};
+    ydpPlans.forEach(p=>{
+      for(let wi=0;wi<p.cycleWeeks;wi++){
+        const wStart=addD(p.startDate,wi*7);
+        if(wStart!==weekStart||!confirmedWeeks[`${p.id}__w${wi}`])continue;
+        const alloc=dailyAllocation[`${p.id}__w${wi}`]||{};
+        const ghN=ghNameMap[p.ghId]||p.ghId;
+        if(!demand[ghN])demand[ghN]={};
+        if(!crops[ghN])crops[ghN]=[];
+        if(p.cropName&&!crops[ghN].includes(p.cropName))crops[ghN].push(p.cropName);
+        Object.entries(alloc).forEach(([act,days])=>{
+          if(!demand[ghN][act])demand[ghN][act]={};
+          Object.entries(days).forEach(([day,h])=>{
+            demand[ghN][act][day]=(demand[ghN][act][day]||0)+(parseFloat(h)||0);
+          });
+        });
+      }
+    });
+    return{demand,crops};
+  },[ydpPlans,dailyAllocation,confirmedWeeks,ghNameMap]);
+
+  // Run CP-SAT optimiser
+  const runOptimiser=async()=>{
+    if(!selWeek)return;
+    setRunning(true);
+    const{demand,crops}=aggregateDemand(selWeek);
+    try{
+      const res=await axios.post(`${API}/schedule/optimise`,{
+        dailyDemand:demand,
+        staff,absences,clusters,clusterTransitions,quarantine,
+        ghCropsMap:crops,
+        currentDate:new Date().toISOString(),
+        timeLimitSecs:10,
+      });
+      const{assignments=[],summary={}}=res.data;
+      setScheduleData(prev=>({...prev,[selWeek]:{assignments,summary,generatedAt:new Date().toISOString()}}));
+      setOverrides(prev=>({...prev,[selWeek]:{}}));
+      // Auto-select first item in current tab
+      const ghs=[...new Set(assignments.filter(a=>!a.unassigned).map(a=>a.greenhouse))].sort();
+      if(ghs.length>0&&!selGH)setSelGH(ghs[0]);
+    }catch(e){alert("Optimiser error: "+e.message);}
+    setRunning(false);
+  };
+
+  const weekData=selWeek?scheduleData[selWeek]:null;
+  const assignments=weekData?.assignments||[];
+  const summary=weekData?.summary||{};
+  const weekOverrides=(selWeek&&overrides[selWeek])||{};
+
+  // Override helpers
+  const getHours=(a)=>{
+    const k=`${a.staffId}__${a.greenhouse}__${a.activity}__${a.day}`;
+    return weekOverrides[k]!=null?weekOverrides[k]:a.hours;
+  };
+  const setHours=(a,val)=>{
+    const k=`${a.staffId}__${a.greenhouse}__${a.activity}__${a.day}`;
+    setOverrides(prev=>({...prev,[selWeek]:{...(prev[selWeek]||{}),[k]:parseFloat(val)||0}}));
+  };
+
+  // Unique lists for sidebars
+  const assigned=assignments.filter(a=>!a.unassigned);
+  const unassigned=assignments.filter(a=>a.unassigned);
+  const ghList=[...new Set(assignments.map(a=>a.greenhouse))].sort();
+  const staffList=[...new Set(assigned.map(a=>a.staffId))].map(id=>{
+    const a=assigned.find(x=>x.staffId===id);return{id,name:a?.staffName||id};
+  }).sort((a,b)=>a.name.localeCompare(b.name));
+  const actList=[...new Set(assigned.map(a=>a.activity))].sort();
+
+  // Quality badge
+  const qBg={optimal:"#dcfce7",feasible:"#fef9c3",greedy:"#e0f2fe",greedy_fallback:"#fce7f3",infeasible:"#fee2e2",timeout:"#fff7ed",unknown:"#f3f4f6"};
+  const qCol={optimal:"#166534",feasible:"#713f12",greedy:"#075985",greedy_fallback:"#9d174d",infeasible:"#991b1b",timeout:"#9a3412",unknown:"#374151"};
+
+  const Row=({label,val,sub,highlight})=>(
+    <tr style={{background:highlight?"#f0fdf4":"white"}}>
+      <td style={{padding:"8px 14px",fontSize:"13px",fontWeight:"500",color:C.textDark,borderBottom:`1px solid #e5e7eb`,width:"150px"}}>{label}</td>
+      <td style={{padding:"8px 14px",fontSize:"13px",color:C.textDark,borderBottom:`1px solid #e5e7eb`,fontWeight:highlight?"700":"400"}}>{val}</td>
+      {sub&&<td style={{padding:"8px 14px",fontSize:"11px",color:C.textLight,borderBottom:`1px solid #e5e7eb`}}>{sub}</td>}
+    </tr>
+  );
+
+  // Editable hour cell
+  const HrsCell=({a,style={}})=>{
+    const k=`${a.staffId}__${a.greenhouse}__${a.activity}__${a.day}`;
+    const editing=editCell===k;
+    const h=getHours(a);
+    return editing
+      ?<input type="number" min="0" step="0.5" autoFocus defaultValue={h}
+          onBlur={e=>{setHours(a,e.target.value);setEditCell(null);}}
+          onKeyDown={e=>{if(e.key==="Enter"){setHours(a,e.target.value);setEditCell(null);}if(e.key==="Escape")setEditCell(null);}}
+          style={{width:"55px",padding:"3px 5px",border:`1px solid ${C.teal}`,borderRadius:"4px",textAlign:"center",fontSize:"12px"}}/>
+      :<span onClick={()=>setEditCell(k)} title="Click to edit"
+          style={{cursor:"pointer",fontWeight:"700",color:weekOverrides[k]!=null?"#7c3aed":C.navy,borderBottom:`1px dashed ${weekOverrides[k]!=null?"#7c3aed":C.border}`,...style}}>
+          {h}h
+        </span>;
+  };
+
+  return(
+    <div>
+      {/* Header */}
+      <div style={{display:"flex",alignItems:"center",gap:"14px",marginBottom:"14px",flexWrap:"wrap"}}>
+        <h2 style={{color:C.navy,margin:0,fontSize:"18px"}}>📅 Schedule</h2>
+        {summary.quality&&<span style={{background:qBg[summary.quality]||"#f3f4f6",color:qCol[summary.quality]||"#374151",padding:"4px 12px",borderRadius:"12px",fontSize:"12px",fontWeight:"700"}}>
+          {summary.solver==="cpsat"||summary.quality==="optimal"||summary.quality==="feasible"?"⚡ CP-SAT":"⚙️ Greedy"} · {summary.quality}
+          {summary.wallTime?` · ${summary.wallTime}s`:""}
+        </span>}
+        {summary.quality&&<div style={{display:"flex",gap:"16px",fontSize:"12px",color:C.textMid}}>
+          <span>Coverage: <strong style={{color:summary.coverageRate>=99?C.green:summary.coverageRate>=85?"#d97706":"#dc2626"}}>{summary.coverageRate}%</strong></span>
+          <span>Assigned: <strong>{summary.totalAssigned}h</strong></span>
+          {summary.totalUnmet>0&&<span style={{color:"#dc2626"}}>Unmet: <strong>{summary.totalUnmet}h</strong></span>}
+          {summary.otHours>0&&<span style={{color:"#d97706"}}>OT: <strong>{summary.otHours}h</strong></span>}
+          {summary.staffMultiGH>0&&<span style={{color:C.textMid}}>Multi-GH staff: {summary.staffMultiGH}</span>}
+        </div>}
+      </div>
+
+      {/* Week selector row */}
+      <div style={{display:"flex",gap:"8px",alignItems:"center",marginBottom:"14px",flexWrap:"wrap"}}>
+        <span style={{fontSize:"12px",fontWeight:"600",color:C.textMid}}>Confirmed weeks:</span>
+        {confirmedCalWeeks.length===0&&<span style={{fontSize:"12px",color:C.textLight,fontStyle:"italic"}}>No confirmed weeks yet — confirm a week in the Demand tab first.</span>}
+        {confirmedCalWeeks.map(ws=>{
+          const hasSched=!!scheduleData[ws];
+          return(
+            <button key={ws} onClick={()=>{setSelWeek(ws);setSelGH(null);setSelStaff(null);setSelAct(null);}}
+              style={{padding:"6px 14px",background:selWeek===ws?C.navy:"white",color:selWeek===ws?"white":C.textMid,border:`2px solid ${selWeek===ws?C.navy:C.border}`,borderRadius:"7px",cursor:"pointer",fontSize:"12px",fontWeight:"600",position:"relative"}}>
+              {fmtD(ws)} – {fmtD(addD(ws,6))}
+              {hasSched&&<span style={{position:"absolute",top:"-6px",right:"-6px",background:"#22c55e",color:"white",borderRadius:"50%",width:"14px",height:"14px",fontSize:"9px",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:"800"}}>✓</span>}
+            </button>
+          );
+        })}
+        {selWeek&&(
+          <button onClick={runOptimiser} disabled={running}
+            style={{...btn(true,C.teal),padding:"8px 18px",fontSize:"13px",opacity:running?0.7:1,marginLeft:"8px"}}>
+            {running?"⏳ Optimising (CP-SAT)...":"⚡ Run CP-SAT Optimiser"}
+          </button>
+        )}
+      </div>
+
+      {!selWeek||!weekData?(
+        <div style={card}>
+          <p style={{color:C.textLight,fontStyle:"italic",textAlign:"center",padding:"20px 0"}}>
+            {selWeek?"Click ⚡ Run CP-SAT Optimiser to generate the schedule for this week.":"Select a confirmed week above to view or generate its schedule."}
+          </p>
+        </div>
+      ):(
+        <div>
+          {/* Sub-tabs */}
+          <div style={{display:"flex",gap:0,marginBottom:"14px",borderBottom:`2px solid ${C.border}`}}>
+            {[{id:"gh",label:"🏗 Greenhouse"},{id:"staff",label:"👤 Staff"},{id:"activity",label:"🔧 Activity"}].map(t=>(
+              <button key={t.id} onClick={()=>setSchedTab(t.id)}
+                style={{background:"none",border:"none",borderBottom:schedTab===t.id?`3px solid ${C.teal}`:"3px solid transparent",padding:"10px 20px",cursor:"pointer",fontSize:"13px",fontWeight:schedTab===t.id?"700":"400",color:schedTab===t.id?C.teal:C.textMid,marginBottom:"-2px"}}>
+                {t.label}
+              </button>
+            ))}
+            {unassigned.length>0&&<div style={{marginLeft:"auto",display:"flex",alignItems:"center",padding:"0 8px",fontSize:"12px",color:"#dc2626",fontWeight:"600"}}>
+              ⚠️ {unassigned.length} unmet slot{unassigned.length!==1?"s":""}
+            </div>}
+          </div>
+
+          {/* ── GH VIEW ── */}
+          {schedTab==="gh"&&(
+            <div style={{display:"flex",gap:0,height:"calc(100vh - 280px)",borderRadius:"10px",overflow:"hidden",border:`1px solid ${C.border}`,boxShadow:"0 2px 12px rgba(0,0,0,0.08)"}}>
+              <div style={{width:"190px",minWidth:"190px",background:C.navy,display:"flex",flexDirection:"column"}}>
+                <div style={{padding:"10px 14px",borderBottom:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.45)",fontSize:"10px",fontWeight:"700",letterSpacing:"2px",textTransform:"uppercase"}}>Greenhouses</div>
+                <div style={{flex:1,overflowY:"auto"}}>
+                  {ghList.map(gh=>(
+                    <button key={gh} onClick={()=>setSelGH(gh)}
+                      style={{display:"block",width:"100%",textAlign:"left",padding:"10px 14px",background:selGH===gh?"rgba(255,255,255,0.13)":"transparent",border:"none",borderLeft:selGH===gh?"3px solid #52B788":"3px solid transparent",color:selGH===gh?"white":"rgba(255,255,255,0.65)",cursor:"pointer",fontSize:"12px",fontWeight:selGH===gh?"600":"400"}}>
+                      {gh}
+                      <div style={{fontSize:"10px",color:"rgba(255,255,255,0.35)",marginTop:"2px"}}>
+                        {assigned.filter(a=>a.greenhouse===gh).reduce((s,a)=>s+getHours(a),0).toFixed(1)}h this week
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div style={{flex:1,background:"#f8faf8",overflow:"auto"}}>
+                {!selGH?<div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",color:C.textLight,fontStyle:"italic"}}>Select a greenhouse</div>:(
+                  <div style={{padding:"14px"}}>
+                    {DAYS.map(day=>{
+                      const dayRows=assigned.filter(a=>a.greenhouse===selGH&&a.day===day);
+                      if(!dayRows.length)return null;
+                      const acts=[...new Set(dayRows.map(a=>a.activity))].sort();
+                      return(
+                        <div key={day} style={{marginBottom:"14px",border:`1px solid ${C.border}`,borderRadius:"8px",overflow:"hidden",background:"white"}}>
+                          <div style={{background:C.navy,padding:"8px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                            <span style={{color:"white",fontWeight:"700",fontSize:"13px"}}>{day}</span>
+                            <span style={{color:"#52B788",fontSize:"12px"}}>{dayRows.reduce((s,a)=>s+getHours(a),0).toFixed(1)} hrs total</span>
+                          </div>
+                          {acts.map(act=>{
+                            const actRows=dayRows.filter(a=>a.activity===act);
+                            return(
+                              <div key={act} style={{borderBottom:`1px solid #e5e7eb`}}>
+                                <div style={{background:"#f0f4f8",padding:"5px 14px",fontSize:"11px",fontWeight:"700",color:C.textMid,textTransform:"uppercase",letterSpacing:"0.5px"}}>{act}</div>
+                                {actRows.map((a,i)=>(
+                                  <div key={i} style={{display:"flex",alignItems:"center",gap:"10px",padding:"7px 14px",borderTop:i>0?`1px solid #f3f4f6`:"none"}}>
+                                    <span style={{flex:1,fontSize:"13px",color:C.textDark}}>{a.staffName}</span>
+                                    {a.transitionMins>0&&<span style={{fontSize:"11px",color:"#d97706",background:"#fef3c7",padding:"1px 6px",borderRadius:"10px"}}>+{a.transitionMins}min travel</span>}
+                                    <HrsCell a={a}/>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })}
+                    {/* Unmet slots for this GH */}
+                    {unassigned.filter(a=>a.greenhouse===selGH).map((a,i)=>(
+                      <div key={i} style={{background:"#fee2e2",border:"1px solid #fca5a5",borderRadius:"6px",padding:"8px 12px",marginBottom:"6px",fontSize:"12px",color:"#991b1b"}}>
+                        ⚠️ {a.day} · {a.activity} · {a.hours}h unassigned — no eligible staff with capacity
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ── STAFF VIEW ── */}
+          {schedTab==="staff"&&(
+            <div style={{display:"flex",gap:0,height:"calc(100vh - 280px)",borderRadius:"10px",overflow:"hidden",border:`1px solid ${C.border}`,boxShadow:"0 2px 12px rgba(0,0,0,0.08)"}}>
+              <div style={{width:"190px",minWidth:"190px",background:C.navy,display:"flex",flexDirection:"column"}}>
+                <div style={{padding:"10px 14px",borderBottom:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.45)",fontSize:"10px",fontWeight:"700",letterSpacing:"2px",textTransform:"uppercase"}}>Staff</div>
+                <div style={{flex:1,overflowY:"auto"}}>
+                  {staffList.map(s=>{
+                    const hrs=assigned.filter(a=>a.staffId===s.id).reduce((t,a)=>t+getHours(a),0);
+                    return(
+                      <button key={s.id} onClick={()=>setSelStaff(s.id)}
+                        style={{display:"block",width:"100%",textAlign:"left",padding:"10px 14px",background:selStaff===s.id?"rgba(255,255,255,0.13)":"transparent",border:"none",borderLeft:selStaff===s.id?"3px solid #52B788":"3px solid transparent",color:selStaff===s.id?"white":"rgba(255,255,255,0.65)",cursor:"pointer",fontSize:"12px",fontWeight:selStaff===s.id?"600":"400"}}>
+                        {s.name}
+                        <div style={{fontSize:"10px",color:"rgba(255,255,255,0.35)",marginTop:"2px"}}>{hrs.toFixed(1)}h scheduled</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div style={{flex:1,background:"#f8faf8",overflow:"auto"}}>
+                {!selStaff?<div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",color:C.textLight,fontStyle:"italic"}}>Select a staff member</div>:(()=>{
+                  const sRows=assigned.filter(a=>a.staffId===selStaff);
+                  const sObj=staff.find(s=>s.id===selStaff);
+                  const totalHrs=sRows.reduce((t,a)=>t+getHours(a),0);
+                  const contracted=sObj?Object.values(sObj.dayHours||{}).reduce((s,h)=>s+h,0):0;
+                  const isOT=totalHrs>contracted;
+                  return(
+                    <div style={{padding:"14px"}}>
+                      <div style={{background:"white",borderRadius:"8px",border:`1px solid ${C.border}`,padding:"12px 16px",marginBottom:"14px",display:"flex",gap:"24px",alignItems:"center",flexWrap:"wrap"}}>
+                        <div>
+                          <div style={{fontWeight:"700",fontSize:"15px",color:C.navy}}>{sRows[0]?.staffName}</div>
+                          <div style={{fontSize:"12px",color:C.textMid,marginTop:"2px"}}>
+                            Total: <strong style={{color:isOT?"#d97706":C.green}}>{totalHrs.toFixed(1)}h</strong>
+                            {contracted>0&&<> / Contracted: {contracted}h {isOT&&<span style={{color:"#d97706",fontWeight:"700"}}>(+{(totalHrs-contracted).toFixed(1)}h OT)</span>}</>}
+                          </div>
+                        </div>
+                        <div style={{display:"flex",gap:"10px",flexWrap:"wrap",fontSize:"12px"}}>
+                          {[...new Set(sRows.map(a=>a.greenhouse))].map(gh=>(
+                            <span key={gh} style={{background:"#e0f2fe",color:"#0369a1",padding:"3px 10px",borderRadius:"12px"}}>{gh}</span>
+                          ))}
+                        </div>
+                      </div>
+                      <table style={{width:"100%",borderCollapse:"collapse",fontSize:"13px",background:"white",borderRadius:"8px",overflow:"hidden",border:`1px solid ${C.border}`}}>
+                        <thead>
+                          <tr style={{background:C.navy}}>
+                            <th style={{padding:"8px 14px",textAlign:"left",color:"white",fontWeight:"700",fontSize:"12px"}}>Day</th>
+                            <th style={{padding:"8px 14px",textAlign:"left",color:"white",fontWeight:"700",fontSize:"12px"}}>Greenhouse</th>
+                            <th style={{padding:"8px 14px",textAlign:"left",color:"white",fontWeight:"700",fontSize:"12px"}}>Activity</th>
+                            <th style={{padding:"8px 14px",textAlign:"center",color:"white",fontWeight:"700",fontSize:"12px"}}>Hours</th>
+                            <th style={{padding:"8px 14px",textAlign:"center",color:"white",fontWeight:"700",fontSize:"12px"}}>Travel</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {DAYS.flatMap(day=>{
+                            const dayRows=sRows.filter(a=>a.day===day);
+                            if(!dayRows.length)return[];
+                            return dayRows.map((a,i)=>(
+                              <tr key={`${day}-${i}`} style={{background:i%2===0?"white":"#f8faf8",borderBottom:`1px solid #e5e7eb`}}>
+                                {i===0&&<td rowSpan={dayRows.length} style={{padding:"8px 14px",fontWeight:"700",color:C.navy,verticalAlign:"top"}}>{DAY_S[day]||day}</td>}
+                                <td style={{padding:"8px 14px",color:C.textDark}}>{a.greenhouse}</td>
+                                <td style={{padding:"8px 14px",color:C.textDark}}>{a.activity}</td>
+                                <td style={{padding:"8px 14px",textAlign:"center"}}><HrsCell a={a}/></td>
+                                <td style={{padding:"8px 14px",textAlign:"center",color:a.transitionMins>0?"#d97706":C.textLight,fontSize:"12px"}}>{a.transitionMins>0?`${a.transitionMins}min`:"—"}</td>
+                              </tr>
+                            ));
+                          })}
+                          <tr style={{background:"#f0fdf4",fontWeight:"800"}}>
+                            <td colSpan={3} style={{padding:"8px 14px",color:C.navy,fontSize:"13px"}}>Week total</td>
+                            <td style={{padding:"8px 14px",textAlign:"center",color:isOT?"#d97706":C.green,fontSize:"14px"}}>{totalHrs.toFixed(1)}h</td>
+                            <td/>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          )}
+
+          {/* ── ACTIVITY VIEW ── */}
+          {schedTab==="activity"&&(
+            <div style={{display:"flex",gap:0,height:"calc(100vh - 280px)",borderRadius:"10px",overflow:"hidden",border:`1px solid ${C.border}`,boxShadow:"0 2px 12px rgba(0,0,0,0.08)"}}>
+              <div style={{width:"190px",minWidth:"190px",background:C.navy,display:"flex",flexDirection:"column"}}>
+                <div style={{padding:"10px 14px",borderBottom:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.45)",fontSize:"10px",fontWeight:"700",letterSpacing:"2px",textTransform:"uppercase"}}>Activities</div>
+                <div style={{flex:1,overflowY:"auto"}}>
+                  {actList.map(act=>{
+                    const hrs=assigned.filter(a=>a.activity===act).reduce((s,a)=>s+getHours(a),0);
+                    return(
+                      <button key={act} onClick={()=>setSelAct(act)}
+                        style={{display:"block",width:"100%",textAlign:"left",padding:"10px 14px",background:selAct===act?"rgba(255,255,255,0.13)":"transparent",border:"none",borderLeft:selAct===act?"3px solid #52B788":"3px solid transparent",color:selAct===act?"white":"rgba(255,255,255,0.65)",cursor:"pointer",fontSize:"12px",fontWeight:selAct===act?"600":"400"}}>
+                        {act}
+                        <div style={{fontSize:"10px",color:"rgba(255,255,255,0.35)",marginTop:"2px"}}>{hrs.toFixed(1)}h · {[...new Set(assigned.filter(a=>a.activity===act).map(a=>a.staffId))].length} staff</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div style={{flex:1,background:"#f8faf8",overflow:"auto"}}>
+                {!selAct?<div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",color:C.textLight,fontStyle:"italic"}}>Select an activity</div>:(
+                  <div style={{padding:"14px"}}>
+                    {ghList.map(gh=>{
+                      const ghActRows=assigned.filter(a=>a.greenhouse===gh&&a.activity===selAct);
+                      if(!ghActRows.length)return null;
+                      const ghHrs=ghActRows.reduce((s,a)=>s+getHours(a),0);
+                      return(
+                        <div key={gh} style={{marginBottom:"14px",border:`1px solid ${C.border}`,borderRadius:"8px",overflow:"hidden",background:"white"}}>
+                          <div style={{background:C.navy,padding:"8px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                            <span style={{color:"white",fontWeight:"700",fontSize:"13px"}}>{gh}</span>
+                            <span style={{color:"#52B788",fontSize:"12px"}}>{ghHrs.toFixed(1)} hrs</span>
+                          </div>
+                          <table style={{width:"100%",borderCollapse:"collapse",fontSize:"12px"}}>
+                            <thead><tr style={{background:"#f0f4f8"}}>
+                              <th style={{padding:"6px 12px",textAlign:"left",fontWeight:"700",color:C.navy,borderBottom:`1px solid ${C.border}`}}>Staff</th>
+                              {DAYS.map(d=><th key={d} style={{padding:"6px 8px",textAlign:"center",fontWeight:"600",color:["Saturday","Sunday"].includes(d)?"#b45309":C.textMid,borderBottom:`1px solid ${C.border}`,minWidth:"52px"}}>{DAY_S[d]}</th>)}
+                              <th style={{padding:"6px 8px",textAlign:"center",fontWeight:"700",color:C.navy,borderBottom:`1px solid ${C.border}`,background:"#e8f4fd"}}>Total</th>
+                            </tr></thead>
+                            <tbody>
+                              {[...new Set(ghActRows.map(a=>a.staffId))].map((sid,si)=>{
+                                const name=ghActRows.find(a=>a.staffId===sid)?.staffName||sid;
+                                const staffTotal=ghActRows.filter(a=>a.staffId===sid).reduce((s,a)=>s+getHours(a),0);
+                                return(
+                                  <tr key={sid} style={{background:si%2===0?"white":"#f8faf8"}}>
+                                    <td style={{padding:"7px 12px",color:C.textDark,fontWeight:"500",borderBottom:`1px solid #e5e7eb`}}>{name}</td>
+                                    {DAYS.map(day=>{
+                                      const a=ghActRows.find(x=>x.staffId===sid&&x.day===day);
+                                      return<td key={day} style={{padding:"6px 4px",textAlign:"center",borderBottom:`1px solid #e5e7eb`,background:["Saturday","Sunday"].includes(day)?"#fffbf0":undefined}}>
+                                        {a?<HrsCell a={a}/>:<span style={{color:C.textLight}}>—</span>}
+                                      </td>;
+                                    })}
+                                    <td style={{padding:"7px 8px",textAlign:"center",fontWeight:"700",color:C.navy,borderBottom:`1px solid #e5e7eb`,background:"#e8f4fd"}}>{staffTotal.toFixed(1)}h</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      );
+                    })}
+                    {/* Unmet for this activity */}
+                    {unassigned.filter(a=>a.activity===selAct).map((a,i)=>(
+                      <div key={i} style={{background:"#fee2e2",border:"1px solid #fca5a5",borderRadius:"6px",padding:"8px 12px",marginBottom:"6px",fontSize:"12px",color:"#991b1b"}}>
+                        ⚠️ {a.greenhouse} · {a.day} · {a.hours}h unassigned
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
