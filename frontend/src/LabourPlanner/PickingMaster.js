@@ -39,7 +39,7 @@ export default function PickingMaster({ pickingData, setPickingData, cropCycles,
     const { start, peakWeek, peak, end } = data.curveParams;
     const vols = bellCurve(start, peakWeek, peak, end, crop.weeks);
     if (vols) mutate(d => ({ ...d, weeklyVolumes: vols }));
-    else alert("Invalid curve parameters. Check: start ≤ peak week ≤ end, all within 1–" + crop.weeks);
+    else alert(`Invalid weeks. Needs: start week ≤ peak week ≤ end week, all between 1 and ${crop.weeks}.`);
   };
 
   const totalVol = data ? data.weeklyVolumes.reduce((s, v) => s + (parseFloat(v) || 0), 0) : 0;
@@ -131,16 +131,16 @@ export default function PickingMaster({ pickingData, setPickingData, cropCycles,
               <div style={{ fontSize: 11, fontWeight: 700, color: LP.textMid, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12 }}>Bell Curve Generator</div>
               <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
                 {[
-                  { key: "start", label: "Start vol (kg)" },
-                  { key: "peakWeek", label: "Peak week" },
-                  { key: "peak", label: "Peak vol (kg)" },
-                  { key: "end", label: "End vol (kg)" },
-                ].map(({ key, label }) => (
+                  { key: "start",   label: "Start week",    placeholder: `1–${crop.weeks}` },
+                  { key: "peakWeek",label: "Peak week",     placeholder: `1–${crop.weeks}` },
+                  { key: "peak",    label: "Peak vol (kg)", placeholder: "kg" },
+                  { key: "end",     label: "End week",      placeholder: `1–${crop.weeks}` },
+                ].map(({ key, label, placeholder }) => (
                   <div key={key} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                     <label style={{ fontSize: 11, color: LP.textMid, fontWeight: 600 }}>{label}</label>
-                    <input type="number" min="0" value={data.curveParams[key]}
+                    <input type="number" min="1" value={data.curveParams[key]}
                       onChange={e => mutate(d => ({ ...d, curveParams: { ...d.curveParams, [key]: e.target.value } }))}
-                      placeholder={key === "peak" ? "kg" : key === "peakWeek" ? `1–${crop.weeks}` : "kg"}
+                      placeholder={placeholder}
                       style={{ ...lpInp, width: 110, padding: "6px 10px", minHeight: 36 }} />
                   </div>
                 ))}
@@ -149,7 +149,7 @@ export default function PickingMaster({ pickingData, setPickingData, cropCycles,
                 </button>
               </div>
               <div style={{ fontSize: 11, color: LP.textLight, marginTop: 8, fontStyle: "italic" }}>
-                Fills all weekly volumes with a smooth bell curve. Edit individual weeks after generating.
+                Curve goes from 0 at start week → peak vol at peak week → 0 at end week. All other weeks stay 0. Edit individual weeks freely after generating.
               </div>
             </div>
 
