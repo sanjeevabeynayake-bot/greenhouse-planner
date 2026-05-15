@@ -124,7 +124,6 @@ function buildGrid(planData, { cropCycles, cropMasterData, greenhouses, pollinat
 function getPlanStatus(plan, today) {
   const pos = planPosition(plan, today);
   if (pos === "past") return "past";
-  if (plan.sentToScheduler && pos === "current") return "active";
   if (plan.sentToScheduler) return "populated";
   return "draft";
 }
@@ -424,7 +423,6 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinatio
 
   const pos = planPosition(plan, today);
   const status = pos === "past" ? "past"
-    : plan.sentToScheduler && pos === "current" ? "active"
     : plan.sentToScheduler ? "populated"
     : "draft";
   const isLocked = status === "past";
@@ -558,11 +556,6 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinatio
               )}
             </div>
           </>
-        )}
-        {status === "active" && (
-          <div style={{ fontSize: 12, color: LP.textLight, display: "flex", alignItems: "center", gap: 6 }}>
-            <span>🔒</span><span>Active plan — read only</span>
-          </div>
         )}
         {status === "past" && (
           <div style={{ fontSize: 12, color: LP.textLight, fontStyle: "italic" }}>Historical record</div>
