@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
+import LabourPlanner from './LabourPlanner';
 
 const API = "https://greenhouse-planner-backend.onrender.com";
 const ALL_DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
@@ -63,6 +64,7 @@ export default function App() {
   const [importPreview,setImportPreview]=useState(null);
   const [importData,setImportData]=useState(null);
   const [importMergeMode,setImportMergeMode]=useState("replace");
+  const [mainSection,setMainSection]=useState("weekly");
 
   useEffect(()=>{
     const tick=()=>setAdelaideTime(new Date().toLocaleString("en-AU",{timeZone:"Australia/Adelaide",weekday:"short",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:true}));
@@ -419,7 +421,19 @@ export default function App() {
         <div style={{display:"flex",alignItems:"center",paddingRight:"16px",borderRight:"1px solid rgba(255,255,255,0.15)",marginRight:"8px"}}>
           <span style={{color:"white",fontWeight:"700",fontSize:"15px"}}>🌿 Greenhouse Planner</span>
         </div>
-        {tabs.map(t=>(
+        <div style={{display:"flex",alignItems:"stretch",borderRight:"1px solid rgba(255,255,255,0.15)",marginRight:"4px",paddingRight:"4px"}}>
+          {[{id:"labour",label:"Labour Planner",icon:"📋"},{id:"weekly",label:"Weekly Scheduler",icon:"📅"}].map(s=>(
+            <button key={s.id} onClick={()=>setMainSection(s.id)} style={{
+              background:mainSection===s.id?"rgba(255,255,255,0.15)":"transparent",
+              color:"white",border:"none",
+              borderBottom:mainSection===s.id?"3px solid #52B788":"3px solid transparent",
+              padding:"12px 14px",cursor:"pointer",fontSize:"13px",
+              fontWeight:mainSection===s.id?"700":"400",
+              opacity:mainSection===s.id?1:0.6
+            }}>{s.icon} {s.label}</button>
+          ))}
+        </div>
+        {mainSection==="weekly"&&tabs.map(t=>(
           <button key={t.id} onClick={()=>setPage(t.id)} style={{
             background:page===t.id?"rgba(255,255,255,0.15)":"transparent",
             color:page===t.id?"white":t.id==="quarantine"?"rgba(255,100,100,0.8)":t.id==="backup"&&backupReminder?"#f39c12":"rgba(255,255,255,0.65)",
@@ -454,6 +468,8 @@ export default function App() {
       )}
 
       <div style={{padding:"20px"}}>
+        {mainSection==="labour"&&<LabourPlanner role={role}/>}
+        {mainSection==="weekly"&&<>
 
         {/* ══ DASHBOARD ══ */}
         {page==="dashboard"&&(
@@ -766,6 +782,7 @@ export default function App() {
             btn={btn} inp={inp} card={card} C={C} API={API}
             adelaideTime={adelaideTime}/>
         )}
+        </>}
 
       </div>
 
