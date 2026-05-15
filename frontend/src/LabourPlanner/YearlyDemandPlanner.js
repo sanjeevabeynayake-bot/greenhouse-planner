@@ -427,7 +427,7 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinatio
     : plan.sentToScheduler && pos === "current" ? "active"
     : plan.sentToScheduler ? "populated"
     : "draft";
-  const isLocked = status === "active" || status === "past";
+  const isLocked = status === "past";
 
   const sqm = plan.zone === "A" ? (gh?.zoneA?.sqm || "")
     : plan.zone === "B" ? (gh?.zoneB?.sqm || "")
