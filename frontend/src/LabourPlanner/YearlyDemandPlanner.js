@@ -422,9 +422,7 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinatio
   const masterData = cropMasterData.find(d => d.cropId === plan.cropId);
 
   const pos = planPosition(plan, today);
-  const status = pos === "past" ? "past"
-    : plan.sentToScheduler ? "populated"
-    : "draft";
+  const status = pos === "past" ? "past" : "draft";
   const isLocked = status === "past";
 
   const sqm = plan.zone === "A" ? (gh?.zoneA?.sqm || "")
@@ -432,10 +430,7 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinatio
     : (gh?.sqm || "");
   const zoneLbl = plan.zone === "A" ? " — Zone A" : plan.zone === "B" ? " — Zone B" : "";
 
-  // Populate window: available from 28 days before plan start
-  const activationDate = addDays(parseDate(plan.startDate), -28);
-  const canPopulate = !isLocked && today >= activationDate;
-  const populateTooltip = !canPopulate && !isLocked ? `Available from ${fmtDate(activationDate)}` : "";
+  const canPopulate = !isLocked;
 
   // Warnings
   const crop = cropCycles.find(c => c.id === plan.cropId);
@@ -529,8 +524,8 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinatio
         </div>
         <StatusBadge status={status} />
 
-        {status === "populated" && (
-          <div style={{ fontSize: 11, color: LP.amber, fontWeight: 600 }}>✓ Sent to scheduler</div>
+        {plan.sentToScheduler && (
+          <div style={{ fontSize: 11, color: LP.mid, fontWeight: 600 }}>✓ Sent to scheduler</div>
         )}
 
         {!isLocked && (
@@ -539,22 +534,10 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinatio
               style={{ ...lpBtn(false, LP.mid), padding: "8px 16px", minHeight: 44 }}>
               ↻ Recalculate
             </button>
-            <div style={{ position: "relative" }}>
-              <button
-                onClick={canPopulate ? doPopulate : undefined}
-                disabled={!canPopulate}
-                title={populateTooltip}
-                style={{ ...lpBtn(canPopulate, LP.light), padding: "8px 18px", minHeight: 44, opacity: canPopulate ? 1 : 0.5, cursor: canPopulate ? "pointer" : "not-allowed" }}>
-                {plan.sentToScheduler
-                  ? (canPopulate ? "↺ Re-populate" : "🔒 Re-populate")
-                  : (canPopulate ? "▶ Populate to Scheduler" : "🔒 Populate to Scheduler")}
-              </button>
-              {!canPopulate && populateTooltip && (
-                <div style={{ position: "absolute", bottom: "calc(100% + 6px)", right: 0, background: LP.textDark, color: LP.white, fontSize: 11, padding: "5px 10px", borderRadius: 6, whiteSpace: "nowrap", zIndex: 10 }}>
-                  {populateTooltip}
-                </div>
-              )}
-            </div>
+            <button onClick={doPopulate}
+              style={{ ...lpBtn(true, LP.light), padding: "8px 18px", minHeight: 44 }}>
+              {plan.sentToScheduler ? "↺ Re-populate to Scheduler" : "▶ Populate to Scheduler"}
+            </button>
           </>
         )}
         {status === "past" && (
