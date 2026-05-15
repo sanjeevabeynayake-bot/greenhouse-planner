@@ -76,35 +76,16 @@ function calcDemand({ cropCycles, greenhouses, cropMasterData, activities, polli
     }
   });
 
-  // Picking: hrsPerSqm × roundsPerWeek × cropSqm for weeks with non-zero volume
+  // Picking: volume (kg) ÷ kgPerHour = hours per week (Option A)
   cropCycles.forEach(crop => {
     const pd = pickingData.find(d => d.cropId === crop.id);
-    const hrsPerSqm = parseFloat(pd?.hrsPerSqm) || 0;
-    const roundsPerWeek = parseFloat(pd?.roundsPerWeek) || 0;
-    const weeklyRate = hrsPerSqm * roundsPerWeek;
-    if (!weeklyRate) return;
-
-    // Sum sqm for this crop across all GHs
-    let totalCropSqm = 0;
-    greenhouses.forEach(gh => {
-      let cropSqm = parseFloat(gh.sqm) || 0;
-      if (gh.splitZones) {
-        const inA = gh.zoneA.crops.includes(crop.id);
-        const inB = gh.zoneB.crops.includes(crop.id);
-        if (inA && !inB) cropSqm = parseFloat(gh.zoneA.sqm) || 0;
-        else if (!inA && inB) cropSqm = parseFloat(gh.zoneB.sqm) || 0;
-        else if (inA && inB) cropSqm = (parseFloat(gh.zoneA.sqm) || 0) + (parseFloat(gh.zoneB.sqm) || 0);
-        else cropSqm = 0;
-      } else {
-        if (!gh.crops.includes(crop.id)) cropSqm = 0;
-      }
-      totalCropSqm += cropSqm;
-    });
-    if (!totalCropSqm) return;
+    const kgPerHour = parseFloat(pd?.kgPerHour) || 0;
+    if (!kgPerHour) return;
 
     pd.weeklyVolumes.forEach((v, wi) => {
-      if (!(parseFloat(v) > 0)) return;
-      const hrs = weeklyRate * totalCropSqm;
+      const vol = parseFloat(v) || 0;
+      if (!vol) return;
+      const hrs = vol / kgPerHour;
       demand[wi][PICKING_ACT] = (demand[wi][PICKING_ACT] || 0) + hrs;
     });
   });
@@ -186,7 +167,7 @@ export default function YearlyDemandPlanner({
               { label: "Crop Cycle Master", ok: cropCycles.some(c => Object.keys(c.matrix).length > 0) },
               { label: "Crop Master rates", ok: cropMasterData.some(d => Object.values(d.cells || {}).some(c => c.h)) },
               { label: "Pollination Master", ok: pollinationData.some(d => d.hoursPerRound && d.roundsPerWeek) },
-              { label: "Picking Master", ok: pickingData.some(d => d.hrsPerSqm && d.roundsPerWeek && d.weeklyVolumes.some(v => parseFloat(v) > 0)) },
+              { label: "Picking Master", ok: pickingData.some(d => d.kgPerHour && d.weeklyVolumes.some(v => parseFloat(v) > 0)) },
             ].map(({ label, ok }) => (
               <div key={label} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: ok ? "#d8f3dc" : "#fff3cd", borderRadius: 8, border: `1px solid ${ok ? "#52B788" : "#C8870A"}` }}>
                 <span style={{ fontSize: 16 }}>{ok ? "✓" : "⚠"}</span>

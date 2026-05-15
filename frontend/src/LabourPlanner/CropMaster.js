@@ -1,7 +1,9 @@
 import React, { useState } from "react";
 import { LP, lpBtn, lpInp } from "./styles";
 
-// Picking and Pollination are excluded from density cascade
+// Picking is hidden from Crop Master entirely (managed in Picking Master)
+const HIDDEN_FROM_CROP_MASTER = ["Picking"];
+// Pollination is shown but excluded from density cascade
 const DENSITY_EXCLUDED = ["Picking", "Pollination"];
 
 function isTicked(crop, act, wi) {
@@ -92,7 +94,9 @@ export default function CropMaster({ cropCycles, activities, cropMasterData, set
     userSelect: "none",
   };
 
-  const configuredCount = activities.filter(a => {
+  const visibleActivities = activities.filter(a => !HIDDEN_FROM_CROP_MASTER.includes(a));
+
+  const configuredCount = visibleActivities.filter(a => {
     const c = data.cells[a];
     return c?.h || c?.t;
   }).length;
@@ -197,7 +201,7 @@ export default function CropMaster({ cropCycles, activities, cropMasterData, set
                 </tr>
               </thead>
               <tbody>
-                {activities.map((act, ai) => {
+                {visibleActivities.map((act, ai) => {
                   const actCell = getCell(data.cells, act);
                   const excluded = DENSITY_EXCLUDED.includes(act);
                   const rowBg = ai % 2 === 0 ? LP.white : "#F5F8F5";
