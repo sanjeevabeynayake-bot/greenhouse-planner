@@ -1,9 +1,8 @@
 import React, { useState } from "react";
 import { LP, lpBtn, lpInp } from "./styles";
 
-// Picking is hidden from Crop Master entirely (managed in Picking Master)
-const HIDDEN_FROM_CROP_MASTER = ["Picking"];
-// Pollination is shown but excluded from density cascade
+// Picking and Pollination are hidden from Crop Master (managed in their own masters)
+const HIDDEN_FROM_CROP_MASTER = ["Picking", "Pollination"];
 const DENSITY_EXCLUDED = ["Picking", "Pollination"];
 
 function isTicked(crop, act, wi) {

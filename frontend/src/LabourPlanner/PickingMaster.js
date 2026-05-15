@@ -2,7 +2,6 @@ import React, { useState } from "react";
 import { LP, lpBtn, lpInp } from "./styles";
 
 // Inclusive bell curve: start and end weeks both get non-zero volume.
-// Zero-crossing is shifted one step before start and one step after end.
 function bellCurve(start, peakWeek, peakVol, end, totalWeeks) {
   const s = parseInt(start) - 1;
   const p = parseInt(peakWeek) - 1;
@@ -14,11 +13,9 @@ function bellCurve(start, peakWeek, peakVol, end, totalWeeks) {
   for (let w = s; w <= e; w++) {
     let v;
     if (w <= p) {
-      // zero-crossing at s-1, peak at p
       const t = (p === s) ? 1 : (w - s + 1) / (p - s + 1);
       v = peak * Math.pow(Math.sin((Math.PI / 2) * t), 2);
     } else {
-      // peak at p, zero-crossing at e+1
       const t = (p === e) ? 0 : (w - p) / (e - p + 1);
       v = peak * Math.pow(Math.cos((Math.PI / 2) * t), 2);
     }
@@ -48,13 +45,8 @@ export default function PickingMaster({ pickingData, setPickingData, cropCycles,
 
   const totalVol = data ? data.weeklyVolumes.reduce((s, v) => s + (parseFloat(v) || 0), 0) : 0;
   const maxVol = data ? Math.max(...data.weeklyVolumes.map(v => parseFloat(v) || 0), 1) : 1;
-
   const kgPerHour = parseFloat(data?.kgPerHour) || 0;
   const totalHrs = kgPerHour > 0 ? totalVol / kgPerHour : null;
-
-  const hrsPerSqm = parseFloat(data?.hrsPerSqm) || 0;
-  const roundsPerWeek = parseFloat(data?.roundsPerWeek) || 0;
-  const areaRate = hrsPerSqm > 0 && roundsPerWeek > 0 ? (hrsPerSqm * roundsPerWeek).toFixed(3) : null;
 
   const Sparkline = () => (
     <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 64, padding: "4px 0 0" }}>
@@ -79,7 +71,7 @@ export default function PickingMaster({ pickingData, setPickingData, cropCycles,
       borderRadius: 12, overflow: "hidden",
       boxShadow: "0 4px 24px rgba(27,67,50,0.14)",
     }}>
-      {/* Left panel — crop list */}
+      {/* Left panel */}
       <div style={{ width: 220, minWidth: 220, background: LP.forest, display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "16px 16px 10px", borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
           <div style={{ color: "rgba(255,255,255,0.45)", fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", marginBottom: 3 }}>Crop Types</div>
@@ -114,63 +106,44 @@ export default function PickingMaster({ pickingData, setPickingData, cropCycles,
       {data && crop ? (
         <div style={{ flex: 1, background: LP.cream, display: "flex", flexDirection: "column", border: `1px solid ${LP.border}`, borderLeft: "none", overflow: "hidden" }}>
 
-          {/* Header — rate fields */}
+          {/* Header */}
           <div style={{ padding: "13px 20px", background: LP.white, borderBottom: `1px solid ${LP.border}`, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
             <h2 style={{ margin: 0, flex: 1, fontSize: 18, color: LP.forest, fontFamily: "'Palatino Linotype', Georgia, serif", fontWeight: 700 }}>{crop.name}</h2>
 
-            {/* Option A — Volume-based (used for YDP) */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: "8px 14px", background: "#d8f3dc", borderRadius: 8, border: `1px solid ${LP.light}` }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: LP.forest, textTransform: "uppercase", letterSpacing: 0.5 }}>Option A — Volume-based (used for hours)</div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 12, color: LP.textMid, whiteSpace: "nowrap" }}>kg / hour:</span>
-                {isEditing
-                  ? <input type="number" min="0" step="1" value={data.kgPerHour ?? ""}
-                      onChange={e => mutate(d => ({ ...d, kgPerHour: e.target.value }))}
-                      placeholder="e.g. 80"
-                      style={{ ...lpInp, width: 90, padding: "4px 8px", minHeight: 32 }} />
-                  : <span style={{ fontWeight: 700, color: LP.mid, fontSize: 15 }}>
-                      {data.kgPerHour ? `${data.kgPerHour} kg/hr` : <em style={{ color: LP.textLight, fontSize: 12, fontWeight: 400 }}>Not set</em>}
-                    </span>
-                }
-                {totalHrs !== null && (
-                  <span style={{ marginLeft: 6, background: LP.forest, color: LP.white, fontWeight: 800, fontSize: 13, padding: "4px 12px", borderRadius: 16 }}>
-                    ≈ {totalHrs.toFixed(0)} hrs total
+            {/* kg/hour field */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 12, color: LP.textMid, whiteSpace: "nowrap" }}>kg / hour:</span>
+              {isEditing
+                ? <input type="number" min="0" step="1" value={data.kgPerHour ?? ""}
+                    onChange={e => mutate(d => ({ ...d, kgPerHour: e.target.value }))}
+                    placeholder="e.g. 80"
+                    style={{ ...lpInp, width: 90, padding: "6px 10px", minHeight: 36 }} />
+                : <span style={{ fontWeight: 700, color: LP.mid, fontSize: 15 }}>
+                    {data.kgPerHour ? `${data.kgPerHour} kg/hr` : <em style={{ color: LP.textLight, fontSize: 13, fontWeight: 400 }}>Not set</em>}
                   </span>
-                )}
-              </div>
+              }
             </div>
 
-            {/* Option B — Area-based (entry only, for future daily plan) */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: "8px 14px", background: "#fff9ee", borderRadius: 8, border: `1px solid ${LP.amber}` }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: LP.amber, textTransform: "uppercase", letterSpacing: 0.5 }}>Option B — Area-based (for daily planning)</div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 12, color: LP.textMid, whiteSpace: "nowrap" }}>hrs/m²/round:</span>
-                {isEditing
-                  ? <input type="number" min="0" step="0.001" value={data.hrsPerSqm ?? ""}
-                      onChange={e => mutate(d => ({ ...d, hrsPerSqm: e.target.value }))}
-                      placeholder="0.000"
-                      style={{ ...lpInp, width: 80, padding: "4px 8px", minHeight: 32 }} />
-                  : <span style={{ fontWeight: 600, color: LP.textDark, fontSize: 13 }}>
-                      {data.hrsPerSqm || <em style={{ color: LP.textLight, fontSize: 12, fontWeight: 400 }}>—</em>}
-                    </span>
-                }
-                <span style={{ fontSize: 12, color: LP.textMid, whiteSpace: "nowrap" }}>rounds/wk:</span>
-                {isEditing
-                  ? <input type="number" min="0" step="1" value={data.roundsPerWeek ?? ""}
-                      onChange={e => mutate(d => ({ ...d, roundsPerWeek: e.target.value }))}
-                      placeholder="0"
-                      style={{ ...lpInp, width: 60, padding: "4px 8px", minHeight: 32 }} />
-                  : <span style={{ fontWeight: 600, color: LP.textDark, fontSize: 13 }}>
-                      {data.roundsPerWeek ? `${data.roundsPerWeek}×` : <em style={{ color: LP.textLight, fontSize: 12, fontWeight: 400 }}>—</em>}
-                    </span>
-                }
-                {areaRate && (
-                  <span style={{ background: "#fff3cd", color: LP.amber, fontWeight: 700, fontSize: 12, padding: "3px 10px", borderRadius: 12 }}>
-                    = {areaRate} hrs/m²/wk
+            {/* Times/week field */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 12, color: LP.textMid, whiteSpace: "nowrap" }}>Times / week:</span>
+              {isEditing
+                ? <input type="number" min="0" step="1" value={data.roundsPerWeek ?? ""}
+                    onChange={e => mutate(d => ({ ...d, roundsPerWeek: e.target.value }))}
+                    placeholder="e.g. 3"
+                    style={{ ...lpInp, width: 70, padding: "6px 10px", minHeight: 36 }} />
+                : <span style={{ fontWeight: 700, color: LP.mid, fontSize: 15 }}>
+                    {data.roundsPerWeek ? `${data.roundsPerWeek}×/wk` : <em style={{ color: LP.textLight, fontSize: 13, fontWeight: 400 }}>Not set</em>}
                   </span>
-                )}
-              </div>
+              }
             </div>
+
+            {/* Total hours badge */}
+            {totalHrs !== null && (
+              <div style={{ background: LP.forest, color: LP.white, fontWeight: 800, fontSize: 14, padding: "6px 16px", borderRadius: 20 }}>
+                ≈ {totalHrs.toFixed(0)} hrs total
+              </div>
+            )}
 
             {isGM && (
               <button onClick={() => setIsEditing(v => !v)} style={{ ...lpBtn(isEditing, isEditing ? LP.amber : LP.mid), padding: "9px 20px" }}>
@@ -204,7 +177,7 @@ export default function PickingMaster({ pickingData, setPickingData, cropCycles,
                 </button>
               </div>
               <div style={{ fontSize: 11, color: LP.textLight, marginTop: 8, fontStyle: "italic" }}>
-                Start and end weeks are inclusive — both will show non-zero volume. Peak vol appears at peak week. Edit individual weeks freely after generating.
+                Start and end weeks are inclusive. Peak vol appears at peak week. Edit individual weeks freely after generating.
               </div>
             </div>
 
@@ -230,11 +203,12 @@ export default function PickingMaster({ pickingData, setPickingData, cropCycles,
             {/* Weekly volume grid */}
             <div style={{ background: LP.white, borderRadius: 10, border: `1px solid ${LP.border}`, overflow: "hidden" }}>
               <div style={{ padding: "10px 18px", borderBottom: `1px solid ${LP.borderLight}`, fontSize: 11, fontWeight: 700, color: LP.textMid, textTransform: "uppercase", letterSpacing: 0.5 }}>
-                Weekly picking volumes (kg)
+                Weekly picking volumes &amp; hours
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)" }}>
                 {data.weeklyVolumes.map((v, i) => {
                   const vol = parseFloat(v) || 0;
+                  const hrs = kgPerHour > 0 && vol > 0 ? vol / kgPerHour : null;
                   const isHigh = vol >= maxVol * 0.8 && vol > 0;
                   return (
                     <div key={i} style={{
@@ -243,7 +217,8 @@ export default function PickingMaster({ pickingData, setPickingData, cropCycles,
                       borderBottom: `1px solid ${LP.borderLight}`,
                       background: vol > 0 ? (isHigh ? "#d8f3dc" : LP.white) : LP.cream,
                     }}>
-                      <div style={{ fontSize: 13, fontWeight: 800, color: LP.forest, marginBottom: 6, letterSpacing: 0.3 }}>
+                      {/* Prominent week number */}
+                      <div style={{ fontSize: 13, fontWeight: 800, color: LP.forest, marginBottom: 6 }}>
                         Week {i + 1}
                       </div>
                       {isEditing ? (
@@ -258,6 +233,12 @@ export default function PickingMaster({ pickingData, setPickingData, cropCycles,
                         <div style={{ fontSize: 15, fontWeight: vol > 0 ? 700 : 400, color: vol > 0 ? LP.textDark : LP.textLight }}>
                           {vol > 0 ? vol.toLocaleString() : "–"}
                           {vol > 0 && <span style={{ fontSize: 11, fontWeight: 400, color: LP.textLight }}> kg</span>}
+                        </div>
+                      )}
+                      {/* Calculated hours */}
+                      {hrs !== null && (
+                        <div style={{ marginTop: 5, padding: "3px 6px", background: LP.cellAutoFill, borderRadius: 4, fontSize: 11, color: LP.mid, fontWeight: 700 }}>
+                          {hrs.toFixed(1)} hrs
                         </div>
                       )}
                     </div>
