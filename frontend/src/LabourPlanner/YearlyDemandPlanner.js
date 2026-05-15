@@ -124,7 +124,6 @@ function buildGrid(planData, { cropCycles, cropMasterData, greenhouses, pollinat
 function getPlanStatus(plan, today) {
   const pos = planPosition(plan, today);
   if (pos === "past") return "past";
-  if (plan.sentToScheduler) return "populated";
   return "draft";
 }
 
@@ -132,9 +131,7 @@ function zoneStatus(ghId, zone, plans, today) {
   const zp = plans.filter(p => p.ghId === ghId && p.zone === zone);
   if (zp.length === 0) return "no-plan";
   const statuses = zp.map(p => getPlanStatus(p, today));
-  for (const s of ["active", "populated", "draft"]) {
-    if (statuses.includes(s)) return s;
-  }
+  if (statuses.includes("draft")) return "draft";
   return "past";
 }
 
@@ -152,17 +149,15 @@ function ghOverallStatus(gh, plans, today) {
 
 function matchesFilter(filter, status) {
   if (filter === "All") return true;
-  const map = { "No Plan": "no-plan", Active: "active", Draft: "draft", Populated: "populated" };
+  const map = { "No Plan": "no-plan", Draft: "draft", Past: "past" };
   return status === (map[filter] ?? filter);
 }
 
 // ─── Status badge ──────────────────────────────────────────────────
 const STATUS_CFG = {
-  "no-plan":  { bg: "#D8DDD8",       color: LP.textMid,   label: "No Plan"   },
-  active:     { bg: LP.mint,         color: LP.forest,    label: "Active"    },
-  draft:      { bg: "#E8F4FD",       color: "#1565C0",    label: "Draft"     },
-  populated:  { bg: LP.amberLight,   color: LP.amber,     label: "Populated" },
-  past:       { bg: "#EFEFEF",       color: LP.textLight, label: "Past"      },
+  "no-plan": { bg: "#D8DDD8",  color: LP.textMid,   label: "No Plan" },
+  draft:     { bg: "#E8F4FD",  color: "#1565C0",    label: "Draft"   },
+  past:      { bg: "#EFEFEF",  color: LP.textLight, label: "Past"    },
 };
 
 function StatusBadge({ status, small }) {
@@ -834,7 +829,7 @@ function SummaryView({ greenhouses, plans, today }) {
 }
 
 // ─── Main component ───────────────────────────────────────────────
-const FILTERS = ["All", "No Plan", "Active", "Draft", "Populated"];
+const FILTERS = ["All", "No Plan", "Draft", "Past"];
 
 export default function YearlyDemandPlanner({
   greenhouses, cropCycles, cropMasterData, activities,
