@@ -69,6 +69,8 @@ export default function App() {
   const [mainSection,setMainSection]=useState(null);
   const [lpRole,setLpRole]=useState(null);
   const [wsHolidays,setWsHolidays]=useState(()=>{try{return JSON.parse(localStorage.getItem("ws_holidays_v1"))||[];}catch{return [];}});
+  const [dailyAllocation,setDailyAllocation]=useState(()=>{try{return JSON.parse(localStorage.getItem("ws_daily_alloc_v1"))||{};}catch{return {};}});
+  const [confirmedWeeks,setConfirmedWeeks]=useState(()=>{try{return JSON.parse(localStorage.getItem("ws_confirmed_weeks_v1"))||{};}catch{return {};}});
 
   useEffect(()=>{
     const tick=()=>setAdelaideTime(new Date().toLocaleString("en-AU",{timeZone:"Australia/Adelaide",weekday:"short",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:true}));
@@ -96,6 +98,8 @@ export default function App() {
   },[]);
 
   useEffect(()=>{localStorage.setItem("ws_holidays_v1",JSON.stringify(wsHolidays));},[wsHolidays]);
+  useEffect(()=>{localStorage.setItem("ws_daily_alloc_v1",JSON.stringify(dailyAllocation));},[dailyAllocation]);
+  useEffect(()=>{localStorage.setItem("ws_confirmed_weeks_v1",JSON.stringify(confirmedWeeks));},[confirmedWeeks]);
 
   const normaliseGH=(gh)=>{if(typeof gh==="string")return{id:gh,name:gh,cropTypes:[]};return{id:gh.id||gh.name||"",name:gh.name||gh.id||"",cropTypes:gh.cropTypes||[]};};
   const ghList=greenhouses.map(normaliseGH);
@@ -619,14 +623,9 @@ export default function App() {
         {/* ══ DEMAND ══ */}
         {page==="demand"&&(
           <DemandPage
-            ghList={ghList} activities={activities} cropTypes={cropTypes}
-            demand={demand} setDemand={setDemand}
-            cycles={cycles} setCycles={setCycles}
-            activeCycleId={activeCycleId} setActiveCycleId={setActiveCycleId}
-            activeWeekIndex={activeWeekIndex} setActiveWeekIndex={setActiveWeekIndex}
-            totalCapacity={totalCapacity} generating={generating}
-            generateSchedule={generateSchedule} setScheduleStale={setScheduleStale}
             wsHolidays={wsHolidays} setWsHolidays={setWsHolidays}
+            dailyAllocation={dailyAllocation} setDailyAllocation={setDailyAllocation}
+            confirmedWeeks={confirmedWeeks} setConfirmedWeeks={setConfirmedWeeks}
             role={role}
             btn={btn} inp={inp} card={card} C={C}/>
         )}
@@ -912,153 +911,126 @@ function ClusterTransitionUI({clusters,setClusters,clusterTransitions,setCluster
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// DEMAND PAGE — day-by-day entry per GH per crop per activity
+// DEMAND PAGE — splits YDP weekly hours into daily allocations per GH
 // ═══════════════════════════════════════════════════════════════════════════════
-function DemandPage({ghList,activities,cropTypes,demand,setDemand,cycles,setCycles,activeCycleId,setActiveCycleId,activeWeekIndex,setActiveWeekIndex,totalCapacity,generating,generateSchedule,setScheduleStale,wsHolidays,setWsHolidays,role,btn,inp,card,C}){
-  const fmtD=(iso)=>{if(!iso)return"";const d=new Date(iso);return d.toLocaleDateString("en-AU",{day:"2-digit",month:"short",year:"numeric"});};
-  const addD=(iso,n)=>{const d=new Date(iso);d.setDate(d.getDate()+n);return d.toISOString().split("T")[0];};
-  const [demandSubTab,setDemandSubTab]=React.useState("ydp");
-  const [ydpSelGH,setYdpSelGH]=React.useState(null);
+function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation,confirmedWeeks,setConfirmedWeeks,role,btn,inp,card,C}){
+  const [demandSubTab,setDemandSubTab]=React.useState("weekly");
+  const [selGHId,setSelGHId]=React.useState(null);
+  const [selPlanId,setSelPlanId]=React.useState(null);
+  const [selWeekIdx,setSelWeekIdx]=React.useState(0);
   const [holidayForm,setHolidayForm]=React.useState({date:"",scope:"all",ghName:"",label:""});
-  const ALL_DAYS_D=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
-  const DAY_SHORT_D={"Monday":"Mon","Tuesday":"Tue","Wednesday":"Wed","Thursday":"Thu","Friday":"Fri","Saturday":"Sat","Sunday":"Sun"};
 
-  const [newCycleName,setNewCycleName]=useState("Cycle 1");
-  const [newCycleStart,setNewCycleStart]=useState(new Date().toISOString().split("T")[0]);
-  const [newCycleActivationDate,setNewCycleActivationDate]=useState("");
-
-  const createCycle=()=>{
-    const start=newCycleStart;
-    const cycle={
-      id:`cycle_${Date.now()}`,name:newCycleName,status:"active",
-      activationDate:newCycleActivationDate||null,
-      weeks:[0,1,2].map(i=>({weekIndex:i,label:`Week ${i+1}`,startDate:addD(start,i*7),endDate:addD(start,i*7+6),ghCrops:{},demand:{}}))
-    };
-    const updated=[...cycles,cycle];
-    setCycles(updated);setActiveCycleId(cycle.id);
-    setDemand(prev=>({...prev,__cycles:updated}));
-  };
-
-  const carryForward=()=>{
-    if(!activeCycle)return;
-    if(!window.confirm("Copy this cycle's demand into a new cycle?"))return;
-    const lastEnd=activeCycle.weeks[2].endDate;
-    const newStart=addD(lastEnd,1);
-    const newCycle={
-      id:`cycle_${Date.now()}`,
-      name:`Cycle ${cycles.length+1}`,status:"draft",
-      activationDate:newStart,
-      weeks:[0,1,2].map(i=>({
-        weekIndex:i,label:`Week ${i+1}`,
-        startDate:addD(newStart,i*7),endDate:addD(newStart,i*7+6),
-        ghCrops:JSON.parse(JSON.stringify(activeCycle.weeks[i]?.ghCrops||{})),
-        demand:JSON.parse(JSON.stringify(activeCycle.weeks[i]?.demand||{}))
-      }))
-    };
-    const updated=[...cycles,newCycle];
-    setCycles(updated);setActiveCycleId(newCycle.id);setActiveWeekIndex(0);
-    setDemand(prev=>({...prev,__cycles:updated}));
-  };
-
-  const activeCycle=cycles.find(c=>c.id===activeCycleId)||cycles[0]||null;
-  const activeWeek=activeCycle?.weeks?.[activeWeekIndex]||null;
-
-  const canActivateCycle=(cy)=>{
-    if(!cy.activationDate)return true;
-    return new Date()>=new Date(cy.activationDate);
-  };
-
-  // demand structure: { ghName: { cropType: { activity: { day: hours } } } }
-  const getWeekDemand=()=>activeWeek?.demand||{};
-
-  const setDayVal=(ghName,cropType,activity,day,val)=>{
-    const updated=cycles.map(cy=>cy.id===activeCycle.id?{...cy,weeks:cy.weeks.map((w,wi)=>{
-      if(wi!==activeWeekIndex)return w;
-      const d=JSON.parse(JSON.stringify(w.demand||{}));
-      if(!d[ghName])d[ghName]={};
-      if(!d[ghName][cropType])d[ghName][cropType]={};
-      if(!d[ghName][cropType][activity])d[ghName][cropType][activity]={};
-      d[ghName][cropType][activity][day]=val;
-      return{...w,demand:d};
-    })}:cy);
-    setCycles(updated);
-    // Flatten for optimiser: sum across days per gh/crop/activity
-    const wd=updated.find(cy=>cy.id===activeCycleId)?.weeks[activeWeekIndex]?.demand||{};
-    const flatDemand={};
-    Object.entries(wd).forEach(([gh,cropRows])=>{
-      flatDemand[gh]={};
-      Object.entries(cropRows).forEach(([,acts])=>Object.entries(acts).forEach(([act,days])=>{
-        const total=Object.values(days).reduce((s,h)=>s+(parseInt(h)||0),0);
-        flatDemand[gh][act]=(flatDemand[gh][act]||0)+total;
-      }));
-    });
-    setDemand(prev=>({...prev,...flatDemand,__cycles:updated}));
-    setScheduleStale(true);
-  };
-
-  const wd=getWeekDemand();
-
-  // Week total
-  const weekTotal=Object.values(wd).reduce((s1,cropRows)=>s1+Object.values(cropRows).reduce((s2,acts)=>s2+Object.values(acts).reduce((s3,days)=>s3+Object.values(days).reduce((s4,h)=>s4+(parseInt(h)||0),0),0),0),0);
-
-  // Build week day dates for header
-  const weekDates={};
-  if(activeWeek?.startDate){ALL_DAYS_D.forEach((day,i)=>{const d=new Date(activeWeek.startDate);d.setDate(d.getDate()+i);weekDates[day]=d.toLocaleDateString("en-AU",{day:"2-digit",month:"short"});});}
-
-  const handleGenerate=()=>{
-    // Build flat demand and cropDemand for optimiser
-    const flat={};
-    const cropDemand={};
-    Object.entries(wd).forEach(([gh,cropRows])=>{
-      flat[gh]={};
-      cropDemand[gh]={};
-      Object.entries(cropRows).forEach(([ct,acts])=>{
-        cropDemand[gh][ct]={};
-        Object.entries(acts).forEach(([act,days])=>{
-          const total=Object.values(days).reduce((s,h)=>s+(parseInt(h)||0),0);
-          flat[gh][act]=(flat[gh][act]||0)+total;
-          cropDemand[gh][ct][act]=total;
-        });
-      });
-    });
-    generateSchedule(flat,cropDemand);
-  };
-
-  // Get GH crops for a specific GH from the ghCrops setting in this week
-  const getGhCrops=(ghName)=>activeWeek?.ghCrops?.[ghName]||[];
-  const setGhCrops=(ghName,crops)=>{
-    const updated=cycles.map(cy=>cy.id===activeCycle.id?{...cy,weeks:cy.weeks.map((w,wi)=>wi===activeWeekIndex?{...w,ghCrops:{...w.ghCrops,[ghName]:crops}}:w)}:cy);
-    setCycles(updated);setDemand(prev=>({...prev,__cycles:updated}));
-  };
-
-  if(!cycles.length||!activeCycle)return(
-    <div>
-      <h2 style={{color:C.navy,marginBottom:"16px"}}>📋 Demand Planning</h2>
-      <div style={card}>
-        <h4 style={{color:C.navy,marginBottom:"16px"}}>Create Your First Planning Cycle</h4>
-        <p style={{color:C.textMid,fontSize:"13px",marginBottom:"16px"}}>A planning cycle covers 3 weeks. Enter the cycle name and start date.</p>
-        <div style={{display:"flex",gap:"12px",flexWrap:"wrap",alignItems:"flex-end"}}>
-          <div><label style={{display:"block",fontSize:"13px",color:C.textMid,marginBottom:"4px"}}>Cycle Name:</label><input value={newCycleName} onChange={e=>setNewCycleName(e.target.value)} style={{...inp,width:"160px"}} placeholder="Cycle 1"/></div>
-          <div><label style={{display:"block",fontSize:"13px",color:C.textMid,marginBottom:"4px"}}>Start Date:</label><input type="date" value={newCycleStart} onChange={e=>setNewCycleStart(e.target.value)} style={inp}/></div>
-          <div><label style={{display:"block",fontSize:"13px",color:C.textMid,marginBottom:"4px"}}>Activation Date (optional):</label><input type="date" value={newCycleActivationDate} onChange={e=>setNewCycleActivationDate(e.target.value)} style={inp}/></div>
-          <button onClick={createCycle} style={{...btn(false,C.green),padding:"9px 20px"}}>🚀 Create Cycle</button>
-        </div>
-      </div>
-    </div>
-  );
-
-  // ── YDP Plans tab ──
-  const ydpPlans=React.useMemo(()=>{try{return JSON.parse(localStorage.getItem("ydp_plans_v1"))||[];}catch{return [];}});
-  const ydpGHs=React.useMemo(()=>{
-    const seen={};
-    ydpPlans.forEach(p=>{if(!seen[p.ghId])seen[p.ghId]={ghId:p.ghId,name:p.ghId,plans:[]};seen[p.ghId].plans.push(p);});
-    return Object.values(seen);
-  });
-  const ydpSel=ydpPlans.filter(p=>p.ghId===ydpSelGH);
+  const DAYS=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+  const WEIGHTS={Mon:1,Tue:1,Wed:1,Thu:1,Fri:1,Sat:0.8,Sun:0.8};
   const SPECIAL=["Picking","Pollination"];
-  const getCell=(cell)=>cell?.isManual?(parseFloat(cell.manualHours)||0):(cell?.hours||0);
 
-  // ── Holidays tab ──
+  const addD=(iso,n)=>{const d=new Date(iso);d.setDate(d.getDate()+n);return d.toISOString().split("T")[0];};
+  const fmtD=(iso)=>{if(!iso)return"";const d=new Date(iso);return d.toLocaleDateString("en-AU",{day:"2-digit",month:"short"});};
+  const getCell=(cell)=>cell?.isManual?(parseFloat(cell.manualHours)||0):(parseFloat(cell?.hours)||0);
+
+  // Load YDP plans and GH name map from localStorage
+  const ydpPlans=React.useMemo(()=>{try{return JSON.parse(localStorage.getItem("ydp_plans_v1"))||[];}catch{return [];}});
+  const ghNameMap=React.useMemo(()=>{
+    try{
+      const lp=JSON.parse(localStorage.getItem("labourPlanner_v1"))||{};
+      const m={};
+      (lp.greenhouses||[]).forEach(gh=>{m[gh.id]=gh.name;});
+      return m;
+    }catch{return {};}
+  });
+  const ghGroups=React.useMemo(()=>{
+    const seen={};
+    ydpPlans.forEach(p=>{
+      if(!seen[p.ghId])seen[p.ghId]={ghId:p.ghId,name:ghNameMap[p.ghId]||p.ghId,plans:[]};
+      seen[p.ghId].plans.push(p);
+    });
+    return Object.values(seen);
+  },[ydpPlans.length]);
+
+  // Auto-select first GH on load
+  React.useEffect(()=>{
+    if(!selGHId&&ghGroups.length>0)setSelGHId(ghGroups[0].ghId);
+  },[ghGroups.length]);
+
+  // Auto-select first plan when GH changes
+  React.useEffect(()=>{
+    const gh=ghGroups.find(g=>g.ghId===selGHId);
+    if(gh&&gh.plans.length>0&&!gh.plans.find(p=>p.id===selPlanId)){
+      setSelPlanId(gh.plans[0].id);setSelWeekIdx(0);
+    }
+  },[selGHId]);
+
+  const selGH=ghGroups.find(g=>g.ghId===selGHId)||null;
+  const selPlan=selGH?.plans.find(p=>p.id===selPlanId)||selGH?.plans[0]||null;
+  const allocKey=selPlan?`${selPlan.id}__w${selWeekIdx}`:null;
+  const weekAlloc=allocKey?dailyAllocation[allocKey]||{}:{};
+  const isConfirmed=allocKey?!!confirmedWeeks[allocKey]:false;
+
+  // All rows for the selected plan
+  const actRows=selPlan?Object.keys(selPlan.grid?.activities||{}).filter(a=>!SPECIAL.includes(a)):[];
+  const allRows=[...actRows,...SPECIAL];
+
+  // Weekly target for a row from YDP
+  const weeklyTarget=(act,wi,plan)=>{
+    if(!plan)return 0;
+    if(act==="Picking")return getCell(plan.grid?.pickingCells?.[wi]);
+    if(act==="Pollination")return getCell(plan.grid?.pollinationCells?.[wi]);
+    return getCell(plan.grid?.activities?.[act]?.[wi]);
+  };
+
+  // Daily allocation accessors
+  const getAllocVal=(act,day)=>{const v=weekAlloc[act]?.[day];return v!=null?v:"";};
+  const setAllocVal=(act,day,val)=>{
+    if(!allocKey)return;
+    setDailyAllocation(prev=>{
+      const cur=prev[allocKey]||{};
+      const curAct=cur[act]||{};
+      const newAct={...curAct};
+      const num=val===""?undefined:parseFloat(val);
+      if(num==null||isNaN(num))delete newAct[day];else newAct[day]=num;
+      return{...prev,[allocKey]:{...cur,[act]:newAct}};
+    });
+  };
+
+  // Auto-allocate: proportional by day weight, skipping holidays
+  const autoAllocate=()=>{
+    if(!selPlan||!allocKey)return;
+    const weekStart=addD(selPlan.startDate,selWeekIdx*7);
+    const holDates=new Set(wsHolidays.filter(h=>h.scope==="all"||h.ghName===selGHId).map(h=>h.date));
+    const working=DAYS.map((d,i)=>{const date=addD(weekStart,i);return holDates.has(date)?null:{d,i,date};}).filter(Boolean);
+    if(!working.length){alert("All days this week are holidays!");return;}
+    const result={};
+    allRows.forEach(act=>{
+      const total=weeklyTarget(act,selWeekIdx,selPlan);
+      if(!total||total===0)return;
+      const totalW=working.reduce((s,{d})=>s+(WEIGHTS[d]||1),0);
+      let rem=total;
+      const alloc={};
+      working.forEach(({d},pos)=>{
+        if(pos===working.length-1){alloc[d]=Math.round(rem*10)/10;}
+        else{const share=Math.round(total*(WEIGHTS[d]||1)/totalW*10)/10;alloc[d]=share;rem=Math.round((rem-share)*10)/10;}
+      });
+      result[act]=alloc;
+    });
+    setDailyAllocation(prev=>({...prev,[allocKey]:result}));
+  };
+
+  // Confirm / unconfirm
+  const confirmWeek=()=>{if(allocKey)setConfirmedWeeks(prev=>({...prev,[allocKey]:true}));};
+  const unconfirmWeek=()=>{if(allocKey)setConfirmedWeeks(prev=>{const n={...prev};delete n[allocKey];return n;});};
+
+  // Totals
+  const rowTotal=(act)=>DAYS.reduce((s,d)=>s+(parseFloat(weekAlloc[act]?.[d])||0),0);
+  const dayTotal=(day)=>allRows.reduce((s,act)=>s+(parseFloat(weekAlloc[act]?.[day])||0),0);
+  const grandTotal=DAYS.reduce((s,d)=>s+dayTotal(d),0);
+  const weekTargetTotal=selPlan?allRows.reduce((s,act)=>s+weeklyTarget(act,selWeekIdx,selPlan),0):0;
+
+  // Deadline banner
+  const todayDow=new Date().getDay();
+  const isAmber=todayDow>=3&&todayDow<=5;
+  const isRed=todayDow===6;
+
+  // Holidays CRUD
   const addHoliday=()=>{
     if(!holidayForm.date||!holidayForm.label){alert("Date and label required.");return;}
     setWsHolidays(prev=>[...prev,{id:`hol_${Date.now()}`,date:holidayForm.date,scope:holidayForm.scope,ghName:holidayForm.ghName,label:holidayForm.label}]);
@@ -1068,102 +1040,178 @@ function DemandPage({ghList,activities,cropTypes,demand,setDemand,cycles,setCycl
 
   return(
     <div>
-      {/* ── Sub-tab switcher ── */}
-      <div style={{display:"flex",alignItems:"center",gap:"0",marginBottom:"18px",borderBottom:`2px solid ${C.border}`}}>
+      {/* Sub-tabs */}
+      <div style={{display:"flex",alignItems:"center",gap:0,marginBottom:"18px",borderBottom:`2px solid ${C.border}`}}>
         <h2 style={{color:C.navy,margin:"0 24px 0 0",fontSize:"18px"}}>📋 Demand</h2>
-        {[{id:"ydp",label:"From Labour Planner"},{id:"manual",label:"Manual Entry"},{id:"holidays",label:"Holidays"}].map(t=>(
+        {[{id:"weekly",label:"Weekly Planner"},{id:"holidays",label:"Holidays"}].map(t=>(
           <button key={t.id} onClick={()=>setDemandSubTab(t.id)} style={{background:"none",border:"none",borderBottom:demandSubTab===t.id?`3px solid ${C.teal}`:"3px solid transparent",padding:"10px 18px",cursor:"pointer",fontSize:"13px",fontWeight:demandSubTab===t.id?"700":"400",color:demandSubTab===t.id?C.teal:C.textMid,marginBottom:"-2px"}}>
             {t.label}
           </button>
         ))}
       </div>
 
-      {/* ── YDP PLANS TAB ── */}
-      {demandSubTab==="ydp"&&(
-        <div style={{display:"flex",gap:0,height:"calc(100vh - 200px)",borderRadius:"10px",overflow:"hidden",border:`1px solid ${C.border}`,boxShadow:"0 2px 12px rgba(0,0,0,0.08)"}}>
-          {/* Left panel — GH list */}
-          <div style={{width:"220px",minWidth:"220px",background:C.navy,display:"flex",flexDirection:"column"}}>
-            <div style={{padding:"12px 14px",borderBottom:"1px solid rgba(255,255,255,0.1)"}}>
-              <div style={{color:"rgba(255,255,255,0.45)",fontSize:"10px",fontWeight:"700",letterSpacing:"2px",textTransform:"uppercase"}}>Greenhouses</div>
-              <div style={{color:"#52B788",fontSize:"11px",marginTop:"2px"}}>{ydpGHs.length} with plans</div>
+      {/* ══ WEEKLY PLANNER ══ */}
+      {demandSubTab==="weekly"&&(
+        <div>
+          {/* Deadline banner */}
+          {(isAmber||isRed)&&(
+            <div style={{background:isRed?"#fee2e2":"#fef3c7",border:`1px solid ${isRed?"#fca5a5":"#fcd34d"}`,borderRadius:"8px",padding:"10px 16px",marginBottom:"14px",display:"flex",alignItems:"center",gap:"10px"}}>
+              <span style={{fontSize:"18px"}}>{isRed?"🔴":"🟡"}</span>
+              <span style={{fontSize:"13px",fontWeight:"600",color:isRed?"#991b1b":"#92400e"}}>
+                {isRed?"Today is Saturday — confirm next week's demand now!":"Deadline approaching — confirm next week's demand by Saturday."}
+              </span>
             </div>
-            <div style={{flex:1,overflowY:"auto"}}>
-              {ydpGHs.length===0&&<div style={{padding:"20px 14px",color:"rgba(255,255,255,0.35)",fontSize:"12px",fontStyle:"italic"}}>No plans populated yet — use the Yearly Demand Planner to create and populate plans.</div>}
-              {ydpGHs.map(g=>(
-                <button key={g.ghId} onClick={()=>setYdpSelGH(g.ghId)} style={{display:"block",width:"100%",textAlign:"left",padding:"10px 14px",background:ydpSelGH===g.ghId?"rgba(255,255,255,0.13)":"transparent",border:"none",borderLeft:ydpSelGH===g.ghId?"3px solid #52B788":"3px solid transparent",color:ydpSelGH===g.ghId?"white":"rgba(255,255,255,0.65)",cursor:"pointer",fontSize:"12px",fontWeight:ydpSelGH===g.ghId?"600":"400"}}>
-                  {g.name}<div style={{fontSize:"10px",color:"rgba(255,255,255,0.35)",marginTop:"2px"}}>{g.plans.length} plan{g.plans.length!==1?"s":""}</div>
-                </button>
-              ))}
+          )}
+
+          {/* Layout */}
+          <div style={{display:"flex",gap:0,height:"calc(100vh - 220px)",borderRadius:"10px",overflow:"hidden",border:`1px solid ${C.border}`,boxShadow:"0 2px 12px rgba(0,0,0,0.08)"}}>
+
+            {/* GH sidebar */}
+            <div style={{width:"200px",minWidth:"200px",background:C.navy,display:"flex",flexDirection:"column"}}>
+              <div style={{padding:"12px 14px",borderBottom:"1px solid rgba(255,255,255,0.1)"}}>
+                <div style={{color:"rgba(255,255,255,0.45)",fontSize:"10px",fontWeight:"700",letterSpacing:"2px",textTransform:"uppercase"}}>Greenhouses</div>
+                <div style={{color:"#52B788",fontSize:"11px",marginTop:"2px"}}>{ghGroups.length} with plans</div>
+              </div>
+              <div style={{flex:1,overflowY:"auto"}}>
+                {ghGroups.length===0&&<div style={{padding:"20px 14px",color:"rgba(255,255,255,0.35)",fontSize:"12px",fontStyle:"italic"}}>No plans yet — create plans in the Yearly Demand Planner first.</div>}
+                {ghGroups.map(g=>(
+                  <button key={g.ghId} onClick={()=>{setSelGHId(g.ghId);setSelWeekIdx(0);}} style={{display:"block",width:"100%",textAlign:"left",padding:"10px 14px",background:selGHId===g.ghId?"rgba(255,255,255,0.13)":"transparent",border:"none",borderLeft:selGHId===g.ghId?"3px solid #52B788":"3px solid transparent",color:selGHId===g.ghId?"white":"rgba(255,255,255,0.65)",cursor:"pointer",fontSize:"12px",fontWeight:selGHId===g.ghId?"600":"400"}}>
+                    {g.name}
+                    <div style={{fontSize:"10px",color:"rgba(255,255,255,0.35)",marginTop:"2px"}}>{g.plans.length} crop plan{g.plans.length!==1?"s":""}</div>
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
-          {/* Right panel — demand grid */}
-          <div style={{flex:1,background:"#f8faf8",overflow:"auto"}}>
-            {!ydpSelGH?<div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",color:C.textLight,fontStyle:"italic",fontSize:"14px"}}>Select a greenhouse to view its demand</div>:(
-              <div style={{padding:"16px"}}>
-                {ydpSel.length===0&&<div style={{color:C.textLight,fontStyle:"italic"}}>No plans for this greenhouse.</div>}
-                {ydpSel.map(plan=>{
-                  const acts=(activities||[]).filter(a=>!SPECIAL.includes(a));
-                  const totalPerWeek=plan.grid?.totalHrsPerWeek||[];
-                  return(
-                    <div key={plan.id} style={{marginBottom:"28px",border:`1px solid ${C.border}`,borderRadius:"8px",overflow:"hidden",background:"white"}}>
-                      <div style={{background:C.navy,padding:"10px 14px",display:"flex",alignItems:"center",gap:"12px"}}>
-                        <div style={{color:"white",fontWeight:"700",fontSize:"13px"}}>{plan.cropName}</div>
-                        <div style={{color:"rgba(255,255,255,0.6)",fontSize:"11px"}}>{fmtD(plan.startDate)} → {plan.cycleWeeks} wks</div>
-                        {plan.zone&&plan.zone!=="full"&&<div style={{background:"rgba(255,255,255,0.15)",color:"white",padding:"2px 8px",borderRadius:"10px",fontSize:"10px"}}>Zone {plan.zone}</div>}
-                        <div style={{marginLeft:"auto",background:"rgba(255,255,255,0.12)",color:"rgba(255,255,255,0.55)",padding:"2px 8px",borderRadius:"10px",fontSize:"10px",display:"flex",alignItems:"center",gap:"4px"}}>🔒 Read-only</div>
-                      </div>
-                      <div style={{overflowX:"auto"}}>
-                        <table style={{borderCollapse:"collapse",width:"100%",fontSize:"11px"}}>
-                          <thead>
-                            <tr style={{background:"#f0f4f8"}}>
-                              <th style={{padding:"7px 12px",textAlign:"left",fontWeight:"700",color:C.textDark,borderBottom:`1px solid ${C.border}`,position:"sticky",left:0,background:"#f0f4f8",minWidth:"140px"}}>Activity</th>
-                              {Array.from({length:plan.cycleWeeks},(_,i)=><th key={i} style={{padding:"7px 6px",textAlign:"center",fontWeight:"600",color:C.textMid,borderBottom:`1px solid ${C.border}`,minWidth:"48px"}}>W{i+1}</th>)}
-                              <th style={{padding:"7px 10px",textAlign:"center",fontWeight:"700",color:C.navy,borderBottom:`1px solid ${C.border}`,background:"#e8f4fd",minWidth:"60px"}}>Total</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {acts.map((act,ai)=>{
-                              const cells=plan.grid?.activities?.[act]||[];
-                              const rowTotal=cells.reduce((s,c)=>s+getCell(c),0);
-                              if(rowTotal===0)return null;
-                              return(
-                                <tr key={act} style={{background:ai%2===0?"white":"#f8faf8"}}>
-                                  <td style={{padding:"6px 12px",fontWeight:"500",color:C.textDark,borderBottom:`1px solid ${C.border}`,position:"sticky",left:0,background:ai%2===0?"white":"#f8faf8"}}>{act}</td>
-                                  {cells.map((c,wi)=>{const h=getCell(c);return(<td key={wi} style={{padding:"6px",textAlign:"center",color:h>0?C.navy:C.textLight,fontWeight:h>0?"600":"400",borderBottom:`1px solid ${C.border}`,background:c?.isManual?"#fffbf0":"inherit"}}>{h>0?h.toFixed(1):"–"}</td>);})}
-                                  {cells.length<plan.cycleWeeks&&Array.from({length:plan.cycleWeeks-cells.length},(_,i)=><td key={`pad-${i}`} style={{padding:"6px",textAlign:"center",color:C.textLight,borderBottom:`1px solid ${C.border}`}}>–</td>)}
-                                  <td style={{padding:"6px 10px",textAlign:"center",fontWeight:"700",color:C.navy,borderBottom:`1px solid ${C.border}`,background:"#e8f4fd"}}>{rowTotal.toFixed(1)}</td>
-                                </tr>
-                              );
-                            })}
-                            <tr>
-                              <td style={{padding:"6px 12px",fontWeight:"700",color:"#d4880e",borderBottom:`1px solid ${C.border}`,position:"sticky",left:0,background:"#fff8e6"}}>Picking</td>
-                              {Array.from({length:plan.cycleWeeks},(_,wi)=>{const h=getCell(plan.grid?.pickingCells?.[wi]);return(<td key={wi} style={{padding:"6px",textAlign:"center",color:h>0?"#d4880e":C.textLight,fontWeight:h>0?"600":"400",borderBottom:`1px solid ${C.border}`,background:"#fff8e6"}}>{h>0?h.toFixed(1):"–"}</td>);})}
-                              <td style={{padding:"6px 10px",textAlign:"center",fontWeight:"700",color:"#d4880e",borderBottom:`1px solid ${C.border}`,background:"#fff8e6"}}>{(plan.grid?.pickingCells||[]).reduce((s,c)=>s+getCell(c),0).toFixed(1)}</td>
-                            </tr>
-                            <tr>
-                              <td style={{padding:"6px 12px",fontWeight:"700",color:"#d4880e",borderBottom:`1px solid ${C.border}`,position:"sticky",left:0,background:"#fff8e6"}}>Pollination</td>
-                              {Array.from({length:plan.cycleWeeks},(_,wi)=>{const h=getCell(plan.grid?.pollinationCells?.[wi]);return(<td key={wi} style={{padding:"6px",textAlign:"center",color:h>0?"#d4880e":C.textLight,fontWeight:h>0?"600":"400",borderBottom:`1px solid ${C.border}`,background:"#fff8e6"}}>{h>0?h.toFixed(1):"–"}</td>);})}
-                              <td style={{padding:"6px 10px",textAlign:"center",fontWeight:"700",color:"#d4880e",borderBottom:`1px solid ${C.border}`,background:"#fff8e6"}}>{(plan.grid?.pollinationCells||[]).reduce((s,c)=>s+getCell(c),0).toFixed(1)}</td>
-                            </tr>
-                            <tr style={{background:C.navy}}>
-                              <td style={{padding:"7px 12px",fontWeight:"800",color:"white",position:"sticky",left:0,background:C.navy}}>Total hrs / week</td>
-                              {totalPerWeek.map((h,wi)=><td key={wi} style={{padding:"7px 6px",textAlign:"center",fontWeight:"800",color:h>0?"#52B788":"rgba(255,255,255,0.3)",fontSize:"12px"}}>{h>0?h.toFixed(1):"–"}</td>)}
-                              {totalPerWeek.length<plan.cycleWeeks&&Array.from({length:plan.cycleWeeks-totalPerWeek.length},(_,i)=><td key={`tp-${i}`} style={{padding:"7px 6px",textAlign:"center",color:"rgba(255,255,255,0.3)"}}>–</td>)}
-                              <td style={{padding:"7px 10px",textAlign:"center",fontWeight:"800",color:"#52B788",fontSize:"13px"}}>{totalPerWeek.reduce((s,h)=>s+h,0).toFixed(1)}</td>
-                            </tr>
-                          </tbody>
-                        </table>
-                      </div>
+
+            {/* Right panel */}
+            {!selGH?(
+              <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:C.textLight,fontStyle:"italic",fontSize:"14px",background:"#f8faf8"}}>
+                Select a greenhouse to plan its weekly demand
+              </div>
+            ):(
+              <div style={{flex:1,background:"#f8faf8",overflow:"hidden",display:"flex",flexDirection:"column"}}>
+
+                {/* Crop plan selector (multiple plans) */}
+                {selGH.plans.length>1&&(
+                  <div style={{background:"white",borderBottom:`1px solid ${C.border}`,padding:"8px 14px",display:"flex",gap:"8px",alignItems:"center",flexWrap:"wrap"}}>
+                    <span style={{fontSize:"12px",color:C.textMid,fontWeight:"600"}}>Crop plan:</span>
+                    {selGH.plans.map(p=>(
+                      <button key={p.id} onClick={()=>{setSelPlanId(p.id);setSelWeekIdx(0);}} style={{padding:"4px 12px",background:selPlanId===p.id?C.teal:"white",color:selPlanId===p.id?"white":C.textMid,border:`1px solid ${selPlanId===p.id?C.teal:C.border}`,borderRadius:"6px",cursor:"pointer",fontSize:"12px",fontWeight:"600"}}>
+                        {p.cropName}{p.zone&&p.zone!=="full"?` (Zone ${p.zone})`:""}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {selPlan&&(<>
+
+                  {/* Week tabs */}
+                  <div style={{background:"white",borderBottom:`1px solid ${C.border}`,padding:"8px 14px",display:"flex",gap:"6px",alignItems:"center",overflowX:"auto"}}>
+                    <span style={{fontSize:"12px",color:C.textMid,fontWeight:"600",marginRight:"4px",whiteSpace:"nowrap"}}>Week:</span>
+                    {Array.from({length:selPlan.cycleWeeks},(_,wi)=>{
+                      const wStart=addD(selPlan.startDate,wi*7);
+                      const wKey=`${selPlan.id}__w${wi}`;
+                      const conf=!!confirmedWeeks[wKey];
+                      return(
+                        <button key={wi} onClick={()=>setSelWeekIdx(wi)} style={{padding:"5px 12px",background:selWeekIdx===wi?C.navy:"white",color:selWeekIdx===wi?"white":C.textMid,border:`2px solid ${selWeekIdx===wi?C.navy:C.border}`,borderRadius:"6px",cursor:"pointer",fontSize:"12px",fontWeight:"600",whiteSpace:"nowrap",position:"relative"}}>
+                          W{wi+1}
+                          <div style={{fontSize:"10px",fontWeight:"400",opacity:0.8,marginTop:"1px"}}>{fmtD(wStart)}</div>
+                          {conf&&<div style={{position:"absolute",top:"-5px",right:"-5px",background:"#22c55e",color:"white",borderRadius:"50%",width:"14px",height:"14px",fontSize:"9px",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:"800"}}>✓</div>}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Toolbar */}
+                  <div style={{background:"white",borderBottom:`1px solid ${C.border}`,padding:"8px 14px",display:"flex",alignItems:"center",gap:"10px",flexWrap:"wrap"}}>
+                    <div style={{flex:1,fontSize:"12px",color:C.textMid}}>
+                      <strong style={{color:C.navy}}>{selPlan.cropName}</strong>
+                      {selPlan.zone&&selPlan.zone!=="full"&&<span style={{marginLeft:"6px",background:"#e0f2fe",color:"#0369a1",padding:"1px 7px",borderRadius:"10px",fontSize:"10px"}}>Zone {selPlan.zone}</span>}
+                      <span style={{marginLeft:"10px"}}>Week {selWeekIdx+1} of {selPlan.cycleWeeks} · {fmtD(addD(selPlan.startDate,selWeekIdx*7))} – {fmtD(addD(selPlan.startDate,selWeekIdx*7+6))}</span>
                     </div>
-                  );
-                })}
+                    <span style={{fontSize:"12px",color:weekTargetTotal>0?(Math.abs(grandTotal-weekTargetTotal)<0.2?C.green:grandTotal>weekTargetTotal?"#dc2626":"#d97706"):C.textLight}}>
+                      Allocated: <strong>{grandTotal.toFixed(1)}</strong> / Target: <strong>{weekTargetTotal.toFixed(1)}</strong> hrs
+                    </span>
+                    <button onClick={autoAllocate} style={{...btn(false,C.teal),padding:"6px 14px",fontSize:"12px"}}>⚡ Auto-allocate</button>
+                    {isConfirmed
+                      ?<><button onClick={unconfirmWeek} style={{...btn(false,"#6b7280"),padding:"6px 14px",fontSize:"12px"}}>↩ Unconfirm</button>
+                        <span style={{background:"#dcfce7",color:"#166534",padding:"4px 10px",borderRadius:"12px",fontSize:"11px",fontWeight:"700"}}>✓ Confirmed</span></>
+                      :<button onClick={confirmWeek} style={{...btn(true,C.green),padding:"6px 14px",fontSize:"12px"}}>✓ Confirm week</button>
+                    }
+                  </div>
+
+                  {/* Grid */}
+                  <div style={{flex:1,overflowY:"auto"}}>
+                    <table style={{borderCollapse:"collapse",width:"100%",fontSize:"12px",tableLayout:"fixed"}}>
+                      <thead style={{position:"sticky",top:0,zIndex:2}}>
+                        <tr style={{background:"#f0f4f8"}}>
+                          <th style={{padding:"8px 12px",textAlign:"left",fontWeight:"700",color:C.navy,borderBottom:`2px solid ${C.border}`,width:"150px",position:"sticky",left:0,background:"#f0f4f8",zIndex:3}}>Activity</th>
+                          {DAYS.map((d,di)=>{
+                            const isWE=di>=5;
+                            return(
+                              <th key={d} style={{padding:"6px 4px",textAlign:"center",fontWeight:"600",color:isWE?"#b45309":C.textMid,borderBottom:`2px solid ${C.border}`,background:isWE?"#fef9c3":"#f0f4f8",minWidth:"72px"}}>
+                                {d}
+                                <div style={{fontSize:"10px",fontWeight:"400",color:C.textLight}}>{fmtD(addD(selPlan.startDate,selWeekIdx*7+di))}</div>
+                              </th>
+                            );
+                          })}
+                          <th style={{padding:"6px 8px",textAlign:"center",fontWeight:"700",color:C.navy,borderBottom:`2px solid ${C.border}`,background:"#e8f4fd",minWidth:"70px"}}>Target<br/><span style={{fontWeight:"400",fontSize:"10px"}}>(from YDP)</span></th>
+                          <th style={{padding:"6px 8px",textAlign:"center",fontWeight:"700",color:C.navy,borderBottom:`2px solid ${C.border}`,background:"#f0fdf4",minWidth:"68px"}}>Row<br/>Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {allRows.map((act,ai)=>{
+                          const target=weeklyTarget(act,selWeekIdx,selPlan);
+                          const rTotal=rowTotal(act);
+                          const isSpec=SPECIAL.includes(act);
+                          const rowBg=isSpec?"#fffbf0":ai%2===0?"white":"#f8faf8";
+                          const diff=rTotal-target;
+                          return(
+                            <tr key={act} style={{background:rowBg}}>
+                              <td style={{padding:"6px 12px",fontWeight:isSpec?"700":"500",color:isSpec?"#d4880e":C.textDark,borderBottom:`1px solid #e5e7eb`,position:"sticky",left:0,background:rowBg,zIndex:1}}>{act}</td>
+                              {DAYS.map((day,di)=>{
+                                const isWE=di>=5;
+                                const hVal=getAllocVal(act,day);
+                                return(
+                                  <td key={day} style={{padding:"3px",textAlign:"center",borderBottom:`1px solid #e5e7eb`,background:isWE?"#fffbf0":undefined}}>
+                                    <input type="number" min="0" step="0.5" value={hVal}
+                                      onChange={e=>setAllocVal(act,day,e.target.value)}
+                                      placeholder="–"
+                                      style={{width:"60px",padding:"4px 3px",border:`1px solid ${C.border}`,borderRadius:"4px",textAlign:"center",fontSize:"12px",background:hVal!==""&&parseFloat(hVal)>0?"white":"#f5f5f5",color:C.textDark}}/>
+                                  </td>
+                                );
+                              })}
+                              <td style={{padding:"6px 8px",textAlign:"center",fontWeight:"700",color:target>0?C.navy:C.textLight,borderBottom:`1px solid #e5e7eb`,background:"#e8f4fd"}}>
+                                {target>0?target.toFixed(1):"–"}
+                              </td>
+                              <td style={{padding:"6px 8px",textAlign:"center",fontWeight:"700",borderBottom:`1px solid #e5e7eb`,background:"#f0fdf4",color:target>0?(Math.abs(diff)<0.2?C.green:diff>0?"#dc2626":"#d97706"):rTotal>0?C.navy:C.textLight}}>
+                                {rTotal>0?rTotal.toFixed(1):"–"}
+                              </td>
+                            </tr>
+                          );
+                        })}
+
+                        {/* Daily total footer */}
+                        <tr style={{background:C.navy,position:"sticky",bottom:0}}>
+                          <td style={{padding:"8px 12px",fontWeight:"800",color:"white",position:"sticky",left:0,background:C.navy,zIndex:1}}>Daily Total</td>
+                          {DAYS.map(day=>{
+                            const dt=dayTotal(day);
+                            return<td key={day} style={{padding:"8px 4px",textAlign:"center",fontWeight:"800",color:dt>0?"#52B788":"rgba(255,255,255,0.3)",fontSize:"13px"}}>{dt>0?dt.toFixed(1):"–"}</td>;
+                          })}
+                          <td style={{padding:"8px",textAlign:"center",fontWeight:"800",color:"#52B788",fontSize:"13px"}}>{weekTargetTotal.toFixed(1)}</td>
+                          <td style={{padding:"8px",textAlign:"center",fontWeight:"800",fontSize:"13px",color:Math.abs(grandTotal-weekTargetTotal)<0.2?"#52B788":grandTotal>weekTargetTotal?"#fca5a5":"#fcd34d"}}>{grandTotal.toFixed(1)}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </>)}
               </div>
             )}
           </div>
         </div>
       )}
 
-      {/* ── HOLIDAYS TAB ── */}
+      {/* ══ HOLIDAYS ══ */}
       {demandSubTab==="holidays"&&(
         <div>
           <div style={{...card,marginBottom:"16px"}}>
@@ -1175,13 +1223,12 @@ function DemandPage({ghList,activities,cropTypes,demand,setDemand,cycles,setCycl
                 <select value={holidayForm.scope} onChange={e=>setHolidayForm(f=>({...f,scope:e.target.value,ghName:""}))} style={inp}>
                   <option value="all">All greenhouses</option>
                   <option value="specific">Specific greenhouse</option>
-                  <option value="partial">Partial day</option>
                 </select>
               </div>
               {holidayForm.scope==="specific"&&<div><label style={{display:"block",fontSize:"12px",color:C.textMid,marginBottom:"4px"}}>Greenhouse</label>
                 <select value={holidayForm.ghName} onChange={e=>setHolidayForm(f=>({...f,ghName:e.target.value}))} style={inp}>
                   <option value="">Select…</option>
-                  {ghList.map(g=><option key={g.id} value={g.name}>{g.name}</option>)}
+                  {ghGroups.map(g=><option key={g.ghId} value={g.ghId}>{g.name}</option>)}
                 </select>
               </div>}
               <button onClick={addHoliday} style={{...btn(true,C.teal),padding:"9px 20px"}}>+ Add</button>
@@ -1196,7 +1243,7 @@ function DemandPage({ghList,activities,cropTypes,demand,setDemand,cycles,setCycl
                   <tr key={h.id} style={{background:i%2===0?"white":"#f8f9fa"}}>
                     <td style={{padding:"8px 12px",borderBottom:`1px solid ${C.border}`}}>{fmtD(h.date)}</td>
                     <td style={{padding:"8px 12px",borderBottom:`1px solid ${C.border}`,fontWeight:"600"}}>{h.label}</td>
-                    <td style={{padding:"8px 12px",borderBottom:`1px solid ${C.border}`,color:C.textMid}}>{h.scope==="all"?"All greenhouses":h.scope==="partial"?"Partial day":h.ghName||"—"}</td>
+                    <td style={{padding:"8px 12px",borderBottom:`1px solid ${C.border}`,color:C.textMid}}>{h.scope==="all"?"All greenhouses":h.ghName||"—"}</td>
                     <td style={{padding:"8px 12px",borderBottom:`1px solid ${C.border}`,textAlign:"center"}}><button onClick={()=>removeHoliday(h.id)} style={{...btn(false,"#c0392b"),padding:"4px 10px",fontSize:"11px"}}>✕</button></td>
                   </tr>
                 ))}</tbody>
@@ -1205,154 +1252,6 @@ function DemandPage({ghList,activities,cropTypes,demand,setDemand,cycles,setCycl
           </div>
         </div>
       )}
-
-      {/* ── MANUAL ENTRY TAB (existing demand planning) ── */}
-      {demandSubTab==="manual"&&<div>
-      <h3 style={{color:C.navy,marginBottom:"16px",fontSize:"15px"}}>Manual Demand Entry</h3>
-
-      {/* Cycle tabs */}
-      <div style={{...card,padding:"12px",marginBottom:"12px"}}>
-        <div style={{display:"flex",alignItems:"center",gap:"8px",flexWrap:"wrap"}}>
-          <span style={{fontWeight:"700",color:C.navy,fontSize:"13px",marginRight:"4px"}}>Cycle:</span>
-          {cycles.map((cy)=>{
-            const locked=cy.status==="draft"&&cy.activationDate&&!canActivateCycle(cy);
-            return(
-              <button key={cy.id} onClick={()=>{setActiveCycleId(cy.id);setActiveWeekIndex(0);}}
-                style={{padding:"6px 14px",background:cy.id===activeCycleId?C.navy:"white",color:cy.id===activeCycleId?"white":C.textMid,border:`2px solid ${cy.id===activeCycleId?C.navy:C.border}`,borderRadius:"6px",cursor:"pointer",fontSize:"12px",fontWeight:"600"}}>
-                {cy.name}
-                <span style={{marginLeft:"6px",fontSize:"10px",opacity:0.7}}>[{cy.status}]</span>
-                {locked&&<span style={{marginLeft:"4px",fontSize:"10px",color:C.gold}}>🔒</span>}
-              </button>
-            );
-          })}
-          <button onClick={()=>{const nm=window.prompt("New cycle name:",`Cycle ${cycles.length+1}`);if(!nm)return;const sd=window.prompt("Start date (YYYY-MM-DD):",addD(activeCycle.weeks[2].endDate,1));if(!sd)return;const ad=window.prompt("Activation date lock (YYYY-MM-DD, optional):",addD(activeCycle.weeks[2].endDate,1));const nc={id:`cycle_${Date.now()}`,name:nm,status:"draft",activationDate:ad||null,weeks:[0,1,2].map(i=>({weekIndex:i,label:`Week ${i+1}`,startDate:addD(sd,i*7),endDate:addD(sd,i*7+6),ghCrops:{},demand:{}}))};const upd=[...cycles,nc];setCycles(upd);setActiveCycleId(nc.id);setActiveWeekIndex(0);setDemand(prev=>({...prev,__cycles:upd}));}} style={{...btn(false,C.teal),fontSize:"12px",padding:"6px 12px"}}>+ New Cycle</button>
-          <button onClick={carryForward} style={{...btn(false,C.blue),fontSize:"12px",padding:"6px 12px"}}>⏩ Carry Forward</button>
-          {activeCycle?.activationDate&&(
-            <span style={{fontSize:"11px",color:canActivateCycle(activeCycle)?C.green:C.gold,marginLeft:"8px"}}>
-              {canActivateCycle(activeCycle)?"✅ Can activate":"🔒 Activates: "+new Date(activeCycle.activationDate).toLocaleDateString("en-AU")}
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* Week tabs */}
-      <div style={{display:"flex",gap:"8px",marginBottom:"16px"}}>
-        {activeCycle.weeks.map((w,wi)=>(
-          <button key={wi} onClick={()=>setActiveWeekIndex(wi)}
-            style={{padding:"10px 20px",background:activeWeekIndex===wi?C.teal:"white",color:activeWeekIndex===wi?"white":C.textMid,border:`2px solid ${activeWeekIndex===wi?C.teal:C.border}`,borderRadius:"8px",cursor:"pointer",fontSize:"13px",fontWeight:"600",flex:1}}>
-            <div>{w.label}</div>
-            <div style={{fontSize:"11px",opacity:0.8,marginTop:"2px"}}>{fmtD(w.startDate)} — {fmtD(w.endDate)}</div>
-          </button>
-        ))}
-      </div>
-
-      {/* Demand grid */}
-      <div style={card}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"14px",flexWrap:"wrap",gap:"8px"}}>
-          <div>
-            <h4 style={{color:C.navy,margin:"0 0 4px 0"}}>{activeCycle.name} — {activeWeek?.label}</h4>
-            <span style={{fontSize:"12px",color:C.textLight}}>{fmtD(activeWeek?.startDate)} to {fmtD(activeWeek?.endDate)}</span>
-          </div>
-          <span style={{fontSize:"13px",color:C.textMid}}>Week total: <strong style={{color:weekTotal>totalCapacity?C.red:C.navy}}>{weekTotal}h</strong> / Capacity: <strong style={{color:C.green}}>{totalCapacity}h</strong></span>
-        </div>
-
-        {/* Per-GH demand entry */}
-        {ghList.map((gh)=>{
-          const ghName=gh.name;
-          const selectedCrops=getGhCrops(ghName);
-          const ghDemand=wd[ghName]||{};
-
-          return(
-            <div key={ghName} style={{marginBottom:"20px",border:`1px solid ${C.border}`,borderRadius:"8px",overflow:"hidden"}}>
-
-              {/* GH header — crop selection */}
-              <div style={{background:C.navy,padding:"8px 12px",display:"flex",alignItems:"center",gap:"12px",flexWrap:"wrap"}}>
-                <span style={{color:"white",fontWeight:"700",fontSize:"13px",minWidth:"120px"}}>{ghName}</span>
-                <span style={{color:"rgba(255,255,255,0.7)",fontSize:"11px"}}>Crops this week:</span>
-                <div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>
-                  {cropTypes.map(ct=>(
-                    <label key={ct} style={{display:"flex",alignItems:"center",gap:"4px",background:selectedCrops.includes(ct)?"rgba(46,204,113,0.3)":"rgba(255,255,255,0.1)",padding:"3px 8px",borderRadius:"4px",cursor:"pointer",border:`1px solid ${selectedCrops.includes(ct)?"#2ecc71":"rgba(255,255,255,0.2)"}`,fontSize:"11px",color:"white"}}>
-                      <input type="checkbox" checked={selectedCrops.includes(ct)} onChange={e=>{const crops=e.target.checked?[...selectedCrops,ct]:selectedCrops.filter(c=>c!==ct);setGhCrops(ghName,crops);}} style={{accentColor:C.green}}/>{ct}
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              {selectedCrops.length===0?(
-                <div style={{padding:"10px 14px",background:"#fafafa",fontSize:"12px",color:C.textLight,fontStyle:"italic"}}>Select crop types above to enter demand hours.</div>
-              ):(
-                <div style={{overflowX:"auto"}}>
-                  {selectedCrops.map((ct,ci)=>{
-                    const ctDemand=ghDemand[ct]||{};
-                    // Calc row total across all activities and days
-                    const ctTotal=activities.reduce((s,act)=>s+ALL_DAYS_D.reduce((sd,day)=>sd+(parseInt(ctDemand[act]?.[day])||0),0),0);
-                    return(
-                      <div key={ct} style={{borderTop:ci>0?`1px solid ${C.border}`:"none"}}>
-                        {/* Crop sub-header */}
-                        <div style={{background:"#eaf4fb",padding:"6px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                          <span style={{fontWeight:"700",color:C.teal,fontSize:"12px"}}>🌱 {ct}</span>
-                          <span style={{fontSize:"11px",color:C.textMid}}>Total: <strong style={{color:ctTotal>0?C.navy:C.textLight}}>{ctTotal||0}h</strong></span>
-                        </div>
-
-                        {/* Per-activity day grid */}
-                        <table style={{borderCollapse:"collapse",fontSize:"11px",width:"100%"}}>
-                          <thead>
-                            <tr style={{background:"#f5f7fa"}}>
-                              <th style={{padding:"5px 12px",textAlign:"left",fontSize:"11px",color:C.navy,fontWeight:"700",minWidth:"150px",borderBottom:`1px solid ${C.border}`}}>Activity</th>
-                              {ALL_DAYS_D.map(day=>(
-                                <th key={day} style={{padding:"4px 3px",textAlign:"center",fontSize:"10px",color:["Saturday","Sunday"].includes(day)?C.orange:C.textMid,minWidth:"52px",borderBottom:`1px solid ${C.border}`,fontWeight:"600"}}>
-                                  {DAY_SHORT_D[day]}
-                                  {weekDates[day]&&<div style={{fontSize:"9px",color:C.textLight,fontWeight:"400"}}>{weekDates[day]}</div>}
-                                </th>
-                              ))}
-                              <th style={{padding:"4px 8px",textAlign:"center",fontSize:"11px",color:C.navy,fontWeight:"700",borderBottom:`1px solid ${C.border}`}}>Total</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {activities.map((activity,ai)=>{
-                              const actDays=ctDemand[activity]||{};
-                              const actTotal=ALL_DAYS_D.reduce((s,day)=>s+(parseInt(actDays[day])||0),0);
-                              return(
-                                <tr key={activity} style={{background:ai%2===0?"white":C.light}}>
-                                  <td style={{padding:"4px 12px",fontWeight:"500",color:C.textDark,fontSize:"11px",borderRight:`1px solid ${C.border}`}}>{activity}</td>
-                                  {ALL_DAYS_D.map(day=>(
-                                    <td key={day} style={{padding:"2px",textAlign:"center",background:["Saturday","Sunday"].includes(day)?"#fffbf5":"inherit"}}>
-                                      <input type="number" min="0" max="99"
-                                        value={actDays[day]||""}
-                                        onChange={e=>setDayVal(ghName,ct,activity,day,parseInt(e.target.value)||0)}
-                                        style={{width:"44px",padding:"2px",border:`1px solid ${C.border}`,borderRadius:"3px",textAlign:"center",fontSize:"11px",background:["Saturday","Sunday"].includes(day)?"#fff8f0":"white"}}/>
-                                    </td>
-                                  ))}
-                                  <td style={{padding:"4px 8px",textAlign:"center",fontWeight:"700",color:actTotal>0?C.navy:C.textLight,fontSize:"11px"}}>{actTotal||"—"}</td>
-                                </tr>
-                              );
-                            })}
-                            {/* Crop subtotal row */}
-                            <tr style={{background:"#eaf4fb",borderTop:`2px solid ${C.border}`}}>
-                              <td style={{padding:"5px 12px",fontWeight:"700",color:C.navy,fontSize:"11px"}}>Daily Total</td>
-                              {ALL_DAYS_D.map(day=>{
-                                const dayTotal=activities.reduce((s,act)=>s+(parseInt(ctDemand[act]?.[day])||0),0);
-                                return <td key={day} style={{padding:"4px 3px",textAlign:"center",fontSize:"11px",fontWeight:dayTotal>0?"700":"400",color:dayTotal>0?C.navy:C.textLight}}>{dayTotal||""}</td>;
-                              })}
-                              <td style={{padding:"5px 8px",textAlign:"center",fontWeight:"700",color:C.navy,fontSize:"11px"}}>{ctTotal}</td>
-                            </tr>
-                          </tbody>
-                        </table>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          );
-        })}
-
-        <div style={{marginTop:"16px",display:"flex",gap:"10px",alignItems:"center",flexWrap:"wrap"}}>
-          <button onClick={handleGenerate} disabled={generating} style={{...btn(false,C.green),padding:"11px 26px",fontSize:"14px",opacity:generating?0.7:1}}>{generating?"⏳ Optimising...":"🚀 Generate Optimised Plan"}</button>
-          <button onClick={()=>{if(window.confirm("Clear all demand for this week?")){const updated=cycles.map(cy=>cy.id===activeCycleId?{...cy,weeks:cy.weeks.map((w,wi)=>wi===activeWeekIndex?{...w,demand:{}}:w)}:cy);setCycles(updated);setDemand(prev=>({...prev,__cycles:updated}));}}} style={btn(false,C.red)}>🗑️ Clear This Week</button>
-        </div>
-      </div>
-      </div>}
     </div>
   );
 }
