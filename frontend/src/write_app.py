@@ -1750,6 +1750,72 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
   const selGH=ghGroups.find(g=>g.ghId===selGHId)||null;
   const selPlan=selGH?.plans.find(p=>p.id===selPlanId)||selGH?.plans[0]||null;
   const allocKey=selPlan?`${selPlan.id}__w${selWeekIdx}`:null;
+  // Weekly target for a row from YDP
+  const weeklyTarget=(act,wi,plan)=>{
+    if(!plan)return 0;
+    if(act==="Picking")return getCell(plan.grid?.pickingCells?.[wi]);
+    if(act==="Pollination")return getCell(plan.grid?.pollinationCells?.[wi]);
+    return getCell(plan.grid?.activities?.[act]?.[wi]);
+  };
+  const getDefaultTimesPerWeek=(plan,act)=>{
+    const cycles=lpData.cropCycles||[];
+    const cyc=cycles.find(c=>c.name===plan?.cropName);
+    if(act==="Picking"){
+      const pd=(lpData.pickingData||[]).find(d=>d.cropId===cyc?.id);
+      if(pd?.roundsPerWeek)return Math.max(1,parseInt(pd.roundsPerWeek)||1);
+      return 1;
+    }
+    if(act==="Pollination"){
+      const pol=(lpData.pollinationData||[]).find(d=>d.ghId===plan?.ghId);
+      if(pol?.roundsPerWeek)return Math.max(1,parseInt(pol.roundsPerWeek)||1);
+      return 1;
+    }
+    if(cyc){
+      const cmd=(lpData.cropMasterData||[]).find(d=>d.cropId===cyc.id);
+      const t=cmd?.cells?.[act]?.t;
+      if(t)return Math.max(1,parseInt(t)||1);
+    }
+    return 1;
+  };
+  const getOrInitStd=(plan,act)=>{
+    const saved=carStandards[plan?.cropName]?.[act];
+    if(saved)return saved;
+    const n=getDefaultTimesPerWeek(plan,act);
+    return{timesPerWeek:n,mode:n>1?"alt":"once",days:defaultDaysFor(n)};
+  };
+  // Allocate a specific plan+week from standards (returns {key, result})
+  const allocPlanWeek=(plan,wi)=>{
+    const key=`${plan.id}__w${wi}`;
+    const weekStart=addD(plan.startDate,wi*7);
+    const holDates=new Set(wsHolidays.filter(h=>h.scope==="all"||h.ghName===plan.ghId).map(h=>h.date));
+    const rows=[...Object.keys(plan.grid?.activities||{}).filter(a=>!SPECIAL.includes(a)),...SPECIAL];
+    const result={};
+    rows.forEach(act=>{
+      const total=weeklyTarget(act,wi,plan);
+      if(!total||total===0)return;
+      const std=carStandards[plan.cropName]?.[act]||getOrInitStd(plan,act);
+      let workDays;
+      const WK_SHORT=["Mon","Tue","Wed","Thu","Fri"];
+      if(std.days&&std.days.length>0){
+        if(std.mode==="alt"){
+          workDays=std.days.filter(fd=>{const di=FULL_DAYS.indexOf(fd);return di>=0&&di<=4&&!holDates.has(addD(weekStart,di));}).map(fd=>DAY_SHORT[fd]||fd);
+          if(!workDays.length)workDays=WK_SHORT.filter((_,i)=>!holDates.has(addD(weekStart,i)));
+        }else{
+          const fd=std.days[0];const di=FULL_DAYS.indexOf(fd);
+          if(di>=0&&di<=4&&!holDates.has(addD(weekStart,di))){workDays=[DAY_SHORT[fd]||fd];}
+          else{const avail=WK_SHORT.filter((_,i)=>!holDates.has(addD(weekStart,i)));workDays=avail.length?[avail[0]]:[];}
+        }
+      }else{workDays=WK_SHORT.filter((_,i)=>!holDates.has(addD(weekStart,i)));}
+      if(!workDays.length)return;
+      let rem=total;const alloc={};
+      workDays.forEach((d,pos)=>{
+        if(pos===workDays.length-1){alloc[d]=Math.round(rem*10)/10;}
+        else{const share=Math.round(total/workDays.length*10)/10;alloc[d]=share;rem=Math.round((rem-share)*10)/10;}
+      });
+      result[act]=alloc;
+    });
+    return{key,result};
+  };
   const isConfirmed=allocKey?!!confirmedWeeks[allocKey]:false;
   // Always compute from YDP grid + standards — never from stale stored state
   const weekAlloc=React.useMemo(()=>{
@@ -1779,43 +1845,6 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
     return[...regular,...(regular.length>0||hasPickData?SPECIAL:[])];
   },[selStdCropName,lpData,ydpPlans.length]);
 
-  // Weekly target for a row from YDP
-  const weeklyTarget=(act,wi,plan)=>{
-    if(!plan)return 0;
-    if(act==="Picking")return getCell(plan.grid?.pickingCells?.[wi]);
-    if(act==="Pollination")return getCell(plan.grid?.pollinationCells?.[wi]);
-    return getCell(plan.grid?.activities?.[act]?.[wi]);
-  };
-
-  // Standards helpers
-  const getDefaultTimesPerWeek=(plan,act)=>{
-    const cycles=lpData.cropCycles||[];
-    const cyc=cycles.find(c=>c.name===plan?.cropName);
-    if(act==="Picking"){
-      const pd=(lpData.pickingData||[]).find(d=>d.cropId===cyc?.id);
-      if(pd?.roundsPerWeek)return Math.max(1,parseInt(pd.roundsPerWeek)||1);
-      return 1;
-    }
-    if(act==="Pollination"){
-      const pol=(lpData.pollinationData||[]).find(d=>d.ghId===plan?.ghId);
-      if(pol?.roundsPerWeek)return Math.max(1,parseInt(pol.roundsPerWeek)||1);
-      return 1;
-    }
-    // All other activities: read ×/wk from Crop Master cells[act].t
-    if(cyc){
-      const cmd=(lpData.cropMasterData||[]).find(d=>d.cropId===cyc.id);
-      const t=cmd?.cells?.[act]?.t;
-      if(t)return Math.max(1,parseInt(t)||1);
-    }
-    return 1;
-  };
-  // Standards are keyed by cropName (not planId) — one standard per crop type applies to ALL GHs growing it
-  const getOrInitStd=(plan,act)=>{
-    const saved=carStandards[plan?.cropName]?.[act];
-    if(saved)return saved;
-    const n=getDefaultTimesPerWeek(plan,act);
-    return{timesPerWeek:n,mode:n>1?"alt":"once",days:defaultDaysFor(n)};
-  };
   const updateStd=(cropName,act,updates)=>{
     setStdsDirty(true);
     setCarStandards(prev=>{
@@ -1832,41 +1861,6 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
     const nd=days.includes(fullDay)?days.filter(d=>d!==fullDay):[...days,fullDay];
     if(!nd.length)return;
     updateStd(cropName,act,{days:nd});
-  };
-
-  // Allocate a specific plan+week from standards (returns {key, result})
-  const allocPlanWeek=(plan,wi)=>{
-    const key=`${plan.id}__w${wi}`;
-    const weekStart=addD(plan.startDate,wi*7);
-    const holDates=new Set(wsHolidays.filter(h=>h.scope==="all"||h.ghName===plan.ghId).map(h=>h.date));
-    const rows=[...Object.keys(plan.grid?.activities||{}).filter(a=>!SPECIAL.includes(a)),...SPECIAL];
-    const result={};
-    rows.forEach(act=>{
-      const total=weeklyTarget(act,wi,plan);
-      if(!total||total===0)return;
-      const std=carStandards[plan.cropName]?.[act]||getOrInitStd(plan,act);
-      let workDays;
-      const WK_FULL=["Monday","Tuesday","Wednesday","Thursday","Friday"];
-      const WK_SHORT=["Mon","Tue","Wed","Thu","Fri"];
-      if(std.days&&std.days.length>0){
-        if(std.mode==="alt"){
-          workDays=std.days.filter(fd=>{const di=FULL_DAYS.indexOf(fd);return di>=0&&di<=4&&!holDates.has(addD(weekStart,di));}).map(fd=>DAY_SHORT[fd]||fd);
-          if(!workDays.length)workDays=WK_SHORT.filter((_,i)=>!holDates.has(addD(weekStart,i)));
-        }else{
-          const fd=std.days[0];const di=FULL_DAYS.indexOf(fd);
-          if(di>=0&&di<=4&&!holDates.has(addD(weekStart,di))){workDays=[DAY_SHORT[fd]||fd];}
-          else{const avail=WK_SHORT.filter((_,i)=>!holDates.has(addD(weekStart,i)));workDays=avail.length?[avail[0]]:[];}
-        }
-      }else{workDays=WK_SHORT.filter((_,i)=>!holDates.has(addD(weekStart,i)));}
-      if(!workDays.length)return;
-      let rem=total;const alloc={};
-      workDays.forEach((d,pos)=>{
-        if(pos===workDays.length-1){alloc[d]=Math.round(rem*10)/10;}
-        else{const share=Math.round(total/workDays.length*10)/10;alloc[d]=share;rem=Math.round((rem-share)*10)/10;}
-      });
-      result[act]=alloc;
-    });
-    return{key,result};
   };
 
   // Recalculate all unconfirmed weeks for ALL plans sharing the same cropName
