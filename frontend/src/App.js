@@ -47,11 +47,12 @@ const EXPLAINER_CONTENT={
 function ExplainerBtn({tabKey,C}){
   const c=EXPLAINER_CONTENT[tabKey];
   const [open,setOpen]=React.useState(false);
+  React.useEffect(()=>{setOpen(false);},[tabKey]);
   if(!c)return null;
   const navy=C?.navy||"#1a3a5c";
   return(
     <>
-      <button onClick={()=>setOpen(true)} title="Help — what is this tab and how to use it" style={{position:"absolute",top:"14px",right:"16px",background:"rgba(26,58,92,0.07)",border:"1px solid rgba(26,58,92,0.18)",color:"rgba(26,58,92,0.65)",borderRadius:"20px",padding:"4px 14px",cursor:"pointer",fontSize:"12px",fontWeight:"600",zIndex:10,whiteSpace:"nowrap"}}>? Help</button>
+      <button onClick={()=>setOpen(true)} title="Help — what is this tab and how to use it" style={{background:"rgba(255,255,255,0.12)",border:"1px solid rgba(255,255,255,0.28)",color:"white",borderRadius:"6px",padding:"6px 14px",cursor:"pointer",fontSize:"12px",fontWeight:"600",whiteSpace:"nowrap",minHeight:"36px",transition:"all 0.12s"}}>? Help</button>
       {open&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:3000,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={()=>setOpen(false)}>
           <div style={{background:"white",borderRadius:"14px",padding:"28px",maxWidth:"500px",width:"92%",maxHeight:"82vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}} onClick={e=>e.stopPropagation()}>
@@ -627,6 +628,7 @@ export default function App() {
             {t.id==="backup"&&backupReminder&&<span style={{color:C.gold,marginLeft:"4px",fontSize:"10px"}}>●</span>}
           </button>
         ))}
+        {mainSection==="weekly"&&<div style={{display:"flex",alignItems:"center",padding:"0 4px 0 8px",borderLeft:"1px solid rgba(255,255,255,0.15)",flexShrink:0}}><ExplainerBtn tabKey={page} C={C}/></div>}
         <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:"10px",padding:"8px 0"}}>
           <span style={{color:"rgba(255,255,255,0.4)",fontSize:"11px"}}>{adelaideTime}</span>
           {cloudStatus==="loading"&&<span style={{fontSize:"11px",color:"#60a5fa",fontWeight:600}}>⟳ Loading…</span>}
@@ -660,8 +662,7 @@ export default function App() {
 
         {/* ══ DASHBOARD ══ */}
         {page==="dashboard"&&(
-          <div style={{position:"relative"}}>
-            <ExplainerBtn tabKey="dashboard" C={C}/>
+          <div>
             <h2 style={{color:C.navy,marginBottom:"16px"}}>📊 Dashboard</h2>
             <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"14px",marginBottom:"20px"}}>
               {[[staff.length,"Total Staff",C.blue,"👥"],[ghList.length,"Greenhouses",C.teal,"🏗️"],[activities.length,"Activities",C.orange,"⚙️"],[cropTypes.length,"Crop Types",C.purple,"🌱"]].map(([val,label,color,icon])=>(
@@ -831,8 +832,7 @@ export default function App() {
 
         {/* ══ ABSENCE ══ */}
         {page==="absence"&&(
-          <div style={{position:"relative"}}>
-            <ExplainerBtn tabKey="absence" C={C}/>
+          <div>
             <h2 style={{color:C.navy,marginBottom:"4px"}}>🏥 Absence Management</h2>
             {activeWeek&&<p style={{color:C.textMid,fontSize:"13px",marginBottom:"16px"}}>Week {activeWeekIndex+1}: {fmtDate(activeWeek.startDate)} — {fmtDate(addDays(activeWeek.startDate,6))}</p>}
             {staff.length===0?(<div style={card}><p style={{color:C.textLight}}>No staff added yet.</p></div>):(
@@ -994,8 +994,7 @@ export default function App() {
 
         {/* ══ EDIT ══ */}
         {page==="edit"&&(
-          <div style={{position:"relative"}}>
-            <ExplainerBtn tabKey="edit" C={C}/>
+          <div>
             <h2 style={{color:C.navy,marginBottom:"16px"}}>✏️ Edit Master Data</h2>
 
             {/* ── Master Staff Defaults ── */}
@@ -1081,8 +1080,7 @@ export default function App() {
 
         {/* ══ QUARANTINE ══ */}
         {page==="quarantine"&&(role==="gm"||role==="lm"||role==="grower")&&(
-          <div style={{position:"relative"}}>
-            <ExplainerBtn tabKey="quarantine" C={C}/>
+          <div>
             <div style={{display:"flex",alignItems:"center",gap:"12px",marginBottom:"16px"}}>
               <h2 style={{color:C.red,margin:0}}>🔴 Quarantine</h2>
               <span style={{background:"#ffe5e5",color:C.red,padding:"4px 10px",borderRadius:"20px",fontSize:"12px",fontWeight:"700"}}>{role==="gm"?"GM":"FULL ACCESS"}</span>
@@ -1403,8 +1401,7 @@ function SchedulePage({scheduleData,setScheduleData,dailyAllocation,confirmedWee
   };
 
   return(
-    <div style={{position:"relative"}}>
-      <ExplainerBtn tabKey="schedule" C={C}/>
+    <div>
       {/* Header */}
       <div style={{display:"flex",alignItems:"center",gap:"14px",marginBottom:"14px",flexWrap:"wrap"}}>
         <h2 style={{color:C.navy,margin:0,fontSize:"18px"}}>📅 Schedule</h2>
@@ -2070,8 +2067,7 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
   };
 
   return(
-    <div style={{position:"relative"}}>
-      <ExplainerBtn tabKey="demand" C={C}/>
+    <div>
       {/* Sub-tabs */}
       <div style={{display:"flex",alignItems:"center",gap:0,marginBottom:"18px",borderBottom:`2px solid ${C.border}`}}>
         <h2 style={{color:C.navy,margin:"0 24px 0 0",fontSize:"18px"}}>📋 Demand</h2>
@@ -2557,8 +2553,7 @@ function OvertimePage({staff,ghList,activities,schedule,absences,overtimeEntries
   const totalOTHours=overtimeEntries.reduce((s,e)=>s+(parseFloat(e.hours)||0),0);
 
   return(
-    <div style={{position:"relative"}}>
-      <ExplainerBtn tabKey="overtime" C={C}/>
+    <div>
       <h2 style={{color:C.navy,marginBottom:"4px"}}>⏱️ Overtime</h2>
       {activeWeek&&<p style={{color:C.textMid,fontSize:"13px",marginBottom:"16px"}}>Week {activeWeekIndex+1}: {fmtDate(activeWeek.startDate)}</p>}
 

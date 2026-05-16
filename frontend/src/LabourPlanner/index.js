@@ -134,17 +134,18 @@ const LP_EXPLAINER = {
 function LPExplainerBtn({ tabKey }) {
   const c = LP_EXPLAINER[tabKey];
   const [open, setOpen] = React.useState(false);
+  React.useEffect(() => { setOpen(false); }, [tabKey]);
   if (!c) return null;
   return (
     <>
       <button
         onClick={() => setOpen(true)}
         style={{
-          position: "absolute", top: 14, right: 16,
-          background: "rgba(27,67,50,0.08)", color: "#1b4332",
-          border: "1px solid rgba(27,67,50,0.22)", borderRadius: 8,
-          padding: "5px 13px", fontSize: 12, fontWeight: 600,
-          cursor: "pointer", zIndex: 10,
+          background: "rgba(255,255,255,0.12)", color: "#fff",
+          border: "1px solid rgba(255,255,255,0.28)", borderRadius: 6,
+          padding: "6px 14px", fontSize: 12, fontWeight: 600,
+          cursor: "pointer", whiteSpace: "nowrap", minHeight: 36,
+          transition: "all 0.12s",
         }}
       >? Help</button>
       {open && (
@@ -302,29 +303,27 @@ export default function LabourPlanner({ lpRole: initRole }) {
               minHeight: 36, whiteSpace: "nowrap", transition: "all 0.12s",
             }}>{r.label}</button>
           ))}
+          <LPExplainerBtn tabKey={activeTab} />
         </div>
       </div>
 
       <div style={{ padding: 20, maxWidth: 1600, margin: "0 auto" }}>
         {activeTab === "dashboard"   && (
-          <div style={{ position: "relative" }}>
-            <LPExplainerBtn tabKey="dashboard" />
-            <LPDashboard
-              cropCycles={cropCycles}
-              cropMasterData={cropMasterData}
-              greenhouses={greenhouses}
-              pollinationData={pollinationData}
-              pickingData={pickingData}
-              activities={activities}
-            />
-          </div>
+          <LPDashboard
+            cropCycles={cropCycles}
+            cropMasterData={cropMasterData}
+            greenhouses={greenhouses}
+            pollinationData={pollinationData}
+            pickingData={pickingData}
+            activities={activities}
+          />
         )}
-        {activeTab === "cropCycle"   && <div style={{ position: "relative" }}><LPExplainerBtn tabKey="cropCycle" /><CropCycleMaster {...sharedProps} /></div>}
-        {activeTab === "greenhouse"  && <div style={{ position: "relative" }}><LPExplainerBtn tabKey="greenhouse" /><GreenhouseMaster {...sharedProps} /></div>}
-        {activeTab === "cropMaster"  && <div style={{ position: "relative" }}><LPExplainerBtn tabKey="cropMaster" /><CropMaster {...sharedProps} /></div>}
-        {activeTab === "pollination" && <div style={{ position: "relative" }}><LPExplainerBtn tabKey="pollination" /><PollinationMaster {...sharedProps} /></div>}
-        {activeTab === "picking"     && <div style={{ position: "relative" }}><LPExplainerBtn tabKey="picking" /><PickingMaster {...sharedProps} /></div>}
-        {activeTab === "yearly"      && <div style={{ position: "relative" }}><LPExplainerBtn tabKey="yearly" /><YearlyDemandPlanner {...sharedProps} /></div>}
+        {activeTab === "cropCycle"   && <CropCycleMaster {...sharedProps} />}
+        {activeTab === "greenhouse"  && <GreenhouseMaster {...sharedProps} />}
+        {activeTab === "cropMaster"  && <CropMaster {...sharedProps} />}
+        {activeTab === "pollination" && <PollinationMaster {...sharedProps} />}
+        {activeTab === "picking"     && <PickingMaster {...sharedProps} />}
+        {activeTab === "yearly"      && <YearlyDemandPlanner {...sharedProps} />}
       </div>
     </div>
   );
