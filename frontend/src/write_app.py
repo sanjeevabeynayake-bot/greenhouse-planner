@@ -82,7 +82,7 @@ export default function App() {
   useEffect(()=>{
     axios.get(`${API}/data`).then(res=>{
       const d=res.data;
-      if(d.staff?.length>0)setStaff(d.staff);
+      if(d.staff?.length>0)setStaff(d.staff.map(normaliseStaff));
       if(d.greenhouses?.length>0)setGreenhouses(d.greenhouses);
       if(d.activities?.length>0)setActivities(d.activities);
       if(d.cropTypes?.length>0)setCropTypes(d.cropTypes);
@@ -105,6 +105,7 @@ export default function App() {
   useEffect(()=>{localStorage.setItem("ws_schedule_v1",JSON.stringify(scheduleData));},[scheduleData]);
 
   const normaliseGH=(gh)=>{if(typeof gh==="string")return{id:gh,name:gh,cropTypes:[]};return{id:gh.id||gh.name||"",name:gh.name||gh.id||"",cropTypes:gh.cropTypes||[]};};
+  const normaliseStaff=(s)=>({cropTypes:s.cropTypes!==undefined?s.cropTypes:[],cropActivities:s.cropActivities!==undefined?s.cropActivities:{},...s});
   const ghList=greenhouses.map(normaliseGH);
   const ghNames=ghList.map(g=>g.name);
 
@@ -2415,7 +2416,7 @@ function BulkCSVImport({staff,setStaff,API,btn,inp,C,setBackupReminder}){
       setResult(res.data);
       // Refresh staff from backend
       const d=await axios.get(`${API}/data`);
-      if(d.data.staff?.length>0){setStaff(d.data.staff);setBackupReminder(true);}
+      if(d.data.staff?.length>0){setStaff(d.data.staff.map(normaliseStaff));setBackupReminder(true);}
     }catch(e){alert("Import error: "+e.message);}
   };
 
