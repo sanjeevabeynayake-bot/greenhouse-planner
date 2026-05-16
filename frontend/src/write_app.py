@@ -1161,6 +1161,10 @@ function SchedulePage({scheduleData,setScheduleData,dailyAllocation,confirmedWee
     return m;
   });
 
+  // Standards + holidays — read from localStorage, refresh when demandVersion changes
+  const carStds=React.useMemo(()=>{try{return JSON.parse(localStorage.getItem("ws_car_standards_v1"))||{};}catch{return {};}},[demandVersion]);
+  const holidays=React.useMemo(()=>{try{return JSON.parse(localStorage.getItem("ws_holidays_v1"))||[];}catch{return [];}},[demandVersion]);
+
   // Find calendar weeks that have confirmed demand
   const confirmedCalWeeks=React.useMemo(()=>{
     const ws=new Set();
@@ -1177,18 +1181,68 @@ function SchedulePage({scheduleData,setScheduleData,dailyAllocation,confirmedWee
     if(!selWeek&&confirmedCalWeeks.length>0)setSelWeek(confirmedCalWeeks[0]);
   },[confirmedCalWeeks.length]);
 
-  // Normalise short day names (Mon→Monday) stored by DemandPage
   const DAY_EXPAND={Mon:"Monday",Tue:"Tuesday",Wed:"Wednesday",Thu:"Thursday",Fri:"Friday",Sat:"Saturday",Sun:"Sunday"};
   const normDay=(d)=>DAY_EXPAND[d]||d;
 
-  // Aggregate daily demand for selected calendar week across all confirmed plans
+  // Compute a single plan+week allocation from YDP grid + standards (same logic as allocPlanWeek in DemandPage)
+  const computeWeekDemand=React.useCallback((plan,wi)=>{
+    if(!plan.grid)return{};
+    const FULL=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+    const FULL_TO_S={Monday:"Mon",Tuesday:"Tue",Wednesday:"Wed",Thursday:"Thu",Friday:"Fri",Saturday:"Sat",Sunday:"Sun"};
+    const WK_S=["Mon","Tue","Wed","Thu","Fri"];
+    const SPEC=["Picking","Pollination"];
+    const daysFor=(n)=>{
+      if(n===1)return["Tuesday"];
+      if(n===2)return["Monday","Thursday"];
+      if(n===3)return["Monday","Wednesday","Friday"];
+      if(n===4)return["Monday","Tuesday","Thursday","Friday"];
+      return["Monday","Tuesday","Wednesday","Thursday","Friday"].slice(0,Math.min(n,5));
+    };
+    const getCell=(cell)=>cell?.isManual?(parseFloat(cell.manualHours)||0):(parseFloat(cell?.hours)||0);
+    const target=(act)=>{
+      if(act==="Picking")return getCell(plan.grid.pickingCells?.[wi]);
+      if(act==="Pollination")return getCell(plan.grid.pollinationCells?.[wi]);
+      return getCell(plan.grid.activities?.[act]?.[wi]);
+    };
+    const weekStart=addD(plan.startDate,wi*7);
+    const holDates=new Set(holidays.filter(h=>h.scope==="all"||h.ghName===plan.ghId).map(h=>h.date));
+    const rows=[...Object.keys(plan.grid.activities||{}).filter(a=>!SPEC.includes(a)),...SPEC];
+    const result={};
+    rows.forEach(act=>{
+      const total=target(act);
+      if(!total||total===0)return;
+      const std=carStds[plan.cropName]?.[act]||{timesPerWeek:1,mode:"once",days:daysFor(1)};
+      let workDays;
+      if(std.days&&std.days.length>0){
+        if(std.mode==="alt"){
+          workDays=std.days.filter(fd=>{const di=FULL.indexOf(fd);return di>=0&&di<=4&&!holDates.has(addD(weekStart,di));}).map(fd=>FULL_TO_S[fd]||fd);
+          if(!workDays.length)workDays=WK_S.filter((_,i)=>!holDates.has(addD(weekStart,i)));
+        }else{
+          const fd=std.days[0];const di=FULL.indexOf(fd);
+          if(di>=0&&di<=4&&!holDates.has(addD(weekStart,di))){workDays=[FULL_TO_S[fd]||fd];}
+          else{const avail=WK_S.filter((_,i)=>!holDates.has(addD(weekStart,i)));workDays=avail.length?[avail[0]]:[];}
+        }
+      }else{workDays=WK_S.filter((_,i)=>!holDates.has(addD(weekStart,i)));}
+      if(!workDays.length)return;
+      let rem=total;const alloc={};
+      workDays.forEach((d,pos)=>{
+        if(pos===workDays.length-1){alloc[d]=Math.round(rem*10)/10;}
+        else{const share=Math.round(total/workDays.length*10)/10;alloc[d]=share;rem=Math.round((rem-share)*10)/10;}
+      });
+      result[act]=alloc;
+    });
+    return result;
+  },[carStds,holidays,demandVersion]);// eslint-disable-line react-hooks/exhaustive-deps
+
+  // Aggregate daily demand for selected calendar week — computed fresh from YDP grid + standards
   const aggregateDemand=React.useCallback((weekStart)=>{
     const demand={};const crops={};
     ydpPlans.forEach(p=>{
+      if(!p.grid)return;
       for(let wi=0;wi<p.cycleWeeks;wi++){
         const wStart=addD(p.startDate,wi*7);
         if(wStart!==weekStart||!confirmedWeeks[`${p.id}__w${wi}`])continue;
-        const alloc=dailyAllocation[`${p.id}__w${wi}`]||{};
+        const alloc=computeWeekDemand(p,wi);
         const ghN=ghNameMap[p.ghId]||p.ghId;
         if(!demand[ghN])demand[ghN]={};
         if(!crops[ghN])crops[ghN]=[];
@@ -1203,7 +1257,7 @@ function SchedulePage({scheduleData,setScheduleData,dailyAllocation,confirmedWee
       }
     });
     return{demand,crops};
-  },[ydpPlans,dailyAllocation,confirmedWeeks,ghNameMap]);
+  },[ydpPlans,computeWeekDemand,confirmedWeeks,ghNameMap]);// eslint-disable-line react-hooks/exhaustive-deps
 
   // Translate simplified crop/activity model → backend {activity,allGreenhouses,cropTypes} format
   const expandStaff=React.useCallback((s,allActivities,allCrops)=>{
