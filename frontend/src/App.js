@@ -126,7 +126,8 @@ export default function App() {
           if(snap.lpData){localStorage.setItem("labourPlanner_v1",JSON.stringify(snap.lpData));window.dispatchEvent(new CustomEvent("lp-snapshot-loaded"));}
           if(snap.ydpPlans)localStorage.setItem("ydp_plans_v1",JSON.stringify(snap.ydpPlans));
           if(snap.ydpLastPopulated)localStorage.setItem("ydp_last_populated_v1",snap.ydpLastPopulated);
-          if(snap.dailyAllocation)setDailyAllocation(snap.dailyAllocation);
+          // Only restore CONFIRMED week allocations — unconfirmed are always recomputed from standards
+          if(snap.dailyAllocation){const cw=snap.confirmedWeeks||{};const confirmedOnly={};Object.keys(snap.dailyAllocation).forEach(k=>{if(cw[k])confirmedOnly[k]=snap.dailyAllocation[k];});setDailyAllocation(confirmedOnly);}
           if(snap.confirmedWeeks)setConfirmedWeeks(snap.confirmedWeeks);
           if(snap.scheduleData)setScheduleData(snap.scheduleData);
           if(snap.carStandards)setCarStandards(snap.carStandards);
@@ -1903,17 +1904,39 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
     alert(`✅ Demand recalculated — ${Object.keys(updates).length} week(s) reset.\n\nAll unconfirmed weeks now use Mon–Fri only with correct day allocations.`);
   };
 
-  // Recompute unconfirmed week whenever plan data or standards change
+  // When navigating to a different week — recompute that week from standards
   React.useEffect(()=>{
     if(!selPlan||!allocKey||isConfirmed)return;
     const{key,result}=allocPlanWeek(selPlan,selWeekIdx);
-    if(Object.keys(result).length>0){
-      setDailyAllocation(prev=>({...prev,[key]:result}));
-    }else{
-      // plan.grid is null or empty — clear stale allocation so display shows empty, not old wrong data
-      setDailyAllocation(prev=>{const n={...prev};delete n[key];return n;});
-    }
-  },[allocKey,demandVersion]);
+    setDailyAllocation(prev=>{
+      const n={...prev};
+      if(Object.keys(result).length>0)n[key]=result;else delete n[key];
+      return n;
+    });
+  },[allocKey]);// eslint-disable-line react-hooks/exhaustive-deps
+
+  // Full recompute of ALL unconfirmed weeks whenever demand version changes (cloud sync, YDP populate, standards apply)
+  React.useEffect(()=>{
+    if(ydpPlans.length===0)return;
+    const updates={};
+    ydpPlans.forEach(plan=>{
+      for(let wi=0;wi<(plan.cycleWeeks||0);wi++){
+        const wKey=`${plan.id}__w${wi}`;
+        if(confirmedWeeks[wKey])continue;
+        const{key,result}=allocPlanWeek(plan,wi);
+        updates[key]=result;
+      }
+    });
+    if(!Object.keys(updates).length)return;
+    setDailyAllocation(prev=>{
+      const next={};
+      // Keep only confirmed week allocations from previous state
+      Object.keys(prev).forEach(k=>{if(confirmedWeeks[k])next[k]=prev[k];});
+      // Overwrite all unconfirmed weeks with freshly computed values
+      Object.assign(next,updates);
+      return next;
+    });
+  },[demandVersion]);// eslint-disable-line react-hooks/exhaustive-deps
 
   // Daily allocation accessors
   const getAllocVal=(act,day)=>{const v=weekAlloc[act]?.[day];return v!=null?v:"";};
