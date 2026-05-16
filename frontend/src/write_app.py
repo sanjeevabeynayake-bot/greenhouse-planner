@@ -109,8 +109,20 @@ export default function App() {
   const ghNames=ghList.map(g=>g.name);
 
   const calcVersatility=(s)=>{
-    if(!activities.length||!ghNames.length)return 0;
+    if(!activities.length)return 0;
     const sa=s.activities||[];
+    const hasNewModel=s.cropTypes!==undefined||s.cropActivities!==undefined;
+    if(hasNewModel){
+      const sCrops=s.cropTypes||[];
+      const cActs=s.cropActivities||{};
+      const effectiveCrops=sCrops.length===0?cropTypes:sCrops;
+      const actSet=new Set();
+      effectiveCrops.forEach(crop=>{const a=cActs[crop];(a==null?activities:(a.length?a:activities)).forEach(x=>actSet.add(x));});
+      const actScore=activities.length?actSet.size/activities.length:1;
+      const cropScore=cropTypes.length?effectiveCrops.length/cropTypes.length:1;
+      return Math.round((actScore*0.6+cropScore*0.4)*100);
+    }
+    if(!ghNames.length)return 0;
     if(sa.length&&typeof sa[0]==="string"){const a=sa.filter(x=>activities.includes(x)).length/activities.length;const g=(s.greenhouses||[]).filter(x=>ghNames.includes(x)).length/ghNames.length;return Math.round((a+g)/2*100);}
     const actNames=sa.map(a=>a.activity);
     const a=actNames.filter(x=>activities.includes(x)).length/activities.length;
