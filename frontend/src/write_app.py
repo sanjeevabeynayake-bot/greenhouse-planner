@@ -992,7 +992,7 @@ function SchedulePage({scheduleData,setScheduleData,dailyAllocation,confirmedWee
     const cActs=s.cropActivities||{};
     const actMap={};
     sCrops.forEach(crop=>{
-      const acts=(!cActs[crop]||cActs[crop].length===0)?allActivities:(cActs[crop]||allActivities);
+      const acts=cActs[crop]==null?allActivities:(cActs[crop].length?cActs[crop]:allActivities);
       acts.forEach(act=>{if(!actMap[act])actMap[act]=[];actMap[act].push(crop);});
     });
     const activities=Object.entries(actMap).map(([act,crops])=>({activity:act,allGreenhouses:true,cropTypes:crops,ghCropTypes:{}}));
@@ -2478,20 +2478,18 @@ function StaffProfilePopup({selectedStaff,setSelectedStaff,staff,setStaff,activi
   const allCrops=staffCrops.length===0;
   const effectiveCrops=allCrops?cropTypes:staffCrops;
 
-  // cropActivities: {cropName: [] (=all) | ["Act1","Act2"]}
+  // cropActivities: null/undefined = all; array = explicit selection
   const cropActs=selectedStaff.cropActivities||{};
-  const getActsForCrop=(crop)=>{const a=cropActs[crop];return(!a||a.length===0)?activities:a;};
-  const allActsForCrop=(crop)=>(!cropActs[crop]||cropActs[crop].length===0);
+  const allActsForCrop=(crop)=>cropActs[crop]==null;
+  const getActsForCrop=(crop)=>allActsForCrop(crop)?activities:(cropActs[crop]||[]);
 
   const toggleCrop=(crop,checked)=>{
     let newCrops;
     if(allCrops){
-      // Was "all" — switching to explicit: keep all except unchecked
       newCrops=checked?cropTypes:cropTypes.filter(c=>c!==crop);
     } else {
       newCrops=checked?[...staffCrops,crop]:staffCrops.filter(c=>c!==crop);
     }
-    // If all crops selected, store as []
     const final=newCrops.length===cropTypes.length?[]:newCrops;
     update({cropTypes:final});
   };
@@ -2501,10 +2499,18 @@ function StaffProfilePopup({selectedStaff,setSelectedStaff,staff,setStaff,activi
   const toggleActForCrop=(crop,act,checked)=>{
     const cur=allActsForCrop(crop)?[...activities]:(cropActs[crop]||[]);
     const next=checked?[...cur,act]:cur.filter(a=>a!==act);
-    const final=next.length===activities.length?[]:next;
-    update({cropActivities:{...cropActs,[crop]:final}});
+    update({cropActivities:{...cropActs,[crop]:next}});
   };
-  const toggleAllActsForCrop=(crop)=>update({cropActivities:{...cropActs,[crop]:[]}});
+  const toggleAllActsForCrop=(crop)=>{
+    if(allActsForCrop(crop)){
+      // Uncheck "All Activities" → switch to explicit with all pre-selected
+      update({cropActivities:{...cropActs,[crop]:[...activities]}});
+    } else {
+      // Re-check "All Activities" → remove key (null = all)
+      const n={...cropActs};delete n[crop];
+      update({cropActivities:n});
+    }
+  };
 
   // Build backend-compatible activities array for display summary
   const summaryActCount=()=>{
