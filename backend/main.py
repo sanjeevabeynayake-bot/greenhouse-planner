@@ -36,6 +36,7 @@ SUPABASE_HEADERS = {
 DATA_KEY = "greenhouse_data"
 LP_DATA_KEY = "lp_data"
 DEMAND_DATA_KEY = "demand_data"
+SNAPSHOT_KEY = "full_snapshot"
 
 def adelaide_now():
     return datetime.now(ADELAIDE_TZ).isoformat()
@@ -1699,6 +1700,18 @@ def get_demand_data():
 def post_demand_data(payload: dict):
     save_data_by_key(DEMAND_DATA_KEY, payload)
     return {"message": "Demand data saved", "savedAt": adelaide_now()}
+
+# ---------------------------------------------------------------------------
+# Full snapshot — single call that captures every localStorage key + LP data
+# ---------------------------------------------------------------------------
+@app.get("/snapshot")
+def get_snapshot():
+    return load_data_by_key(SNAPSHOT_KEY) or {}
+
+@app.post("/snapshot")
+def post_snapshot(payload: dict):
+    save_data_by_key(SNAPSHOT_KEY, payload)
+    return {"message": "Snapshot saved", "savedAt": adelaide_now()}
 
 # ---------------------------------------------------------------------------
 # Migration endpoint

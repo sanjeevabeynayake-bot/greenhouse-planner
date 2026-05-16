@@ -76,10 +76,9 @@ export default function App() {
   const [scheduleData,setScheduleData]=useState(()=>{try{return JSON.parse(localStorage.getItem("ws_schedule_v1"))||{};}catch{return {};}});
   const [carStandards,setCarStandards]=useState(()=>{try{return JSON.parse(localStorage.getItem("ws_car_standards_v1"))||{};}catch{return {};}});
   const [demandVersion,setDemandVersion]=useState(0);
-  const [demandSyncStatus,setDemandSyncStatus]=useState("idle"); // "idle"|"pending"|"saving"|"error"
-  const [demandRetryKey,setDemandRetryKey]=useState(0);
-  const demandCloudSaveTimer=useRef(null);
-  const demandCloudLoaded=useRef(false);
+  const [cloudStatus,setCloudStatus]=useState("idle"); // "idle"|"loading"|"saving"|"synced"|"error"
+  const [cloudRetryKey,setCloudRetryKey]=useState(0);
+  const [lastPushed,setLastPushed]=useState(null);
 
   useEffect(()=>{
     const tick=()=>setAdelaideTime(new Date().toLocaleString("en-AU",{timeZone:"Australia/Adelaide",weekday:"short",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:true}));
@@ -113,96 +112,53 @@ export default function App() {
   useEffect(()=>{localStorage.setItem("ws_car_standards_v1",JSON.stringify(carStandards));},[carStandards]);
   useEffect(()=>{localStorage.setItem("ws_audit_log_v1",JSON.stringify(auditLog));},[auditLog]);
 
-  // ── Cloud load on mount: load demand-data AND lp-data in parallel ────────
+  // ── Snapshot load on mount: fetch everything from cloud in one call ───────
   useEffect(()=>{
+    setCloudStatus("loading");
     const ac=new AbortController();
     const t=setTimeout(()=>ac.abort(),55000);
-
-    // Helper: read a localStorage key safely
-    const ls=(key,fallback)=>{try{return JSON.parse(localStorage.getItem(key)||JSON.stringify(fallback));}catch(e){return fallback;}};
-
-    Promise.all([
-      fetch(`${API}/demand-data`,{signal:ac.signal}).then(r=>r.json()).catch(()=>null),
-      fetch(`${API}/lp-data`,{signal:ac.signal}).then(r=>r.json()).catch(()=>null),
-    ]).then(([demandData,lpData])=>{
-      clearTimeout(t);
-
-      // ── Demand data ──────────────────────────────────────────────────────
-      const hasDD=demandData&&typeof demandData==="object"&&
-        (demandData.ydpPlans?.length>0||Object.keys(demandData.dailyAllocation||{}).length>0||
-         Object.keys(demandData.confirmedWeeks||{}).length>0||Object.keys(demandData.carStandards||{}).length>0);
-      if(hasDD){
-        if(demandData.dailyAllocation)setDailyAllocation(demandData.dailyAllocation);
-        if(demandData.confirmedWeeks)setConfirmedWeeks(demandData.confirmedWeeks);
-        if(demandData.scheduleData)setScheduleData(demandData.scheduleData);
-        if(demandData.carStandards)setCarStandards(demandData.carStandards);
-        if(demandData.wsHolidays)setWsHolidays(demandData.wsHolidays);
-        if(demandData.auditLog)setAuditLog(demandData.auditLog);
-        if(demandData.ydpPlans)localStorage.setItem("ydp_plans_v1",JSON.stringify(demandData.ydpPlans));
-        if(demandData.ydpLastPopulated)localStorage.setItem("ydp_last_populated_v1",demandData.ydpLastPopulated);
-        setDemandVersion(v=>v+1);
-      } else if(demandData!==null){
-        // Cloud empty — seed from this browser's localStorage
-        const seed={
-          dailyAllocation:ls("ws_daily_alloc_v1",{}),confirmedWeeks:ls("ws_confirmed_weeks_v1",{}),
-          scheduleData:ls("ws_schedule_v1",{}),carStandards:ls("ws_car_standards_v1",{}),
-          wsHolidays:ls("ws_holidays_v1",[]),auditLog:ls("ws_audit_log_v1",[]),
-          ydpPlans:ls("ydp_plans_v1",[]),ydpLastPopulated:localStorage.getItem("ydp_last_populated_v1")||null,
-        };
-        fetch(`${API}/demand-data`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(seed)}).catch(()=>{});
-      }
-
-      // ── LP data ──────────────────────────────────────────────────────────
-      const hasLP=lpData&&typeof lpData==="object"&&
-        (lpData.cropCycles?.length>0||lpData.greenhouses?.length>0||lpData.activities?.length>0);
-      if(hasLP){
-        // Cloud has LP data — write to localStorage so LP component picks it up on mount
-        localStorage.setItem("labourPlanner_v1",JSON.stringify(lpData));
-        setDemandVersion(v=>v+1); // triggers LP-reading memos to refresh
-      } else if(lpData!==null){
-        // Cloud LP empty — seed from this browser's localStorage
-        const lpLocal=ls("labourPlanner_v1",null);
-        if(lpLocal&&(lpLocal.cropCycles?.length>0||lpLocal.activities?.length>0)){
-          fetch(`${API}/lp-data`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(lpLocal)}).catch(()=>{});
+    fetch(`${API}/snapshot`,{signal:ac.signal})
+      .then(r=>r.json())
+      .then(snap=>{
+        clearTimeout(t);
+        const hasData=snap&&typeof snap==="object"&&snap.pushedAt;
+        if(hasData){
+          if(snap.lpData){localStorage.setItem("labourPlanner_v1",JSON.stringify(snap.lpData));window.dispatchEvent(new CustomEvent("lp-snapshot-loaded"));}
+          if(snap.ydpPlans)localStorage.setItem("ydp_plans_v1",JSON.stringify(snap.ydpPlans));
+          if(snap.ydpLastPopulated)localStorage.setItem("ydp_last_populated_v1",snap.ydpLastPopulated);
+          if(snap.dailyAllocation)setDailyAllocation(snap.dailyAllocation);
+          if(snap.confirmedWeeks)setConfirmedWeeks(snap.confirmedWeeks);
+          if(snap.scheduleData)setScheduleData(snap.scheduleData);
+          if(snap.carStandards)setCarStandards(snap.carStandards);
+          if(snap.wsHolidays)setWsHolidays(snap.wsHolidays);
+          if(snap.auditLog)setAuditLog(snap.auditLog);
+          setDemandVersion(v=>v+1);
+          setLastPushed(snap.pushedAt);
         }
-      }
-
-      setDemandSyncStatus("idle");
-      demandCloudLoaded.current=true;
-    }).catch(e=>{
-      clearTimeout(t);
-      setDemandSyncStatus("error");
-      demandCloudLoaded.current=true;
-    });
-
-    // Listen for YDP plan saves and trigger cloud save
-    const ydpHandler=()=>{if(demandCloudLoaded.current)setDemandVersion(v=>v+1);};
+        setCloudStatus("synced");
+      })
+      .catch(()=>{clearTimeout(t);setCloudStatus("error");});
+    const ydpHandler=()=>setDemandVersion(v=>v+1);
     window.addEventListener("ydp-plans-changed",ydpHandler);
     return()=>{clearTimeout(t);ac.abort();window.removeEventListener("ydp-plans-changed",ydpHandler);};
-  },[demandRetryKey]);// eslint-disable-line react-hooks/exhaustive-deps
+  },[cloudRetryKey]);// eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Debounced cloud save — demand-data + lp-data together ────────────────
-  useEffect(()=>{
-    if(!demandCloudLoaded.current)return;
-    setDemandSyncStatus("pending");
-    if(demandCloudSaveTimer.current)clearTimeout(demandCloudSaveTimer.current);
-    demandCloudSaveTimer.current=setTimeout(()=>{
-      setDemandSyncStatus("saving");
-      let ydpSaved=[];try{ydpSaved=JSON.parse(localStorage.getItem("ydp_plans_v1"))||[];}catch(e2){}
-      let lpSaved=null;try{lpSaved=JSON.parse(localStorage.getItem("labourPlanner_v1"));}catch(e3){}
-      const demandPayload={
-        dailyAllocation,confirmedWeeks,scheduleData,carStandards,wsHolidays,auditLog,
-        ydpPlans:ydpSaved,ydpLastPopulated:localStorage.getItem("ydp_last_populated_v1")||null,
-      };
-      Promise.all([
-        fetch(`${API}/demand-data`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(demandPayload)}),
-        lpSaved&&(lpSaved.cropCycles?.length>0||lpSaved.activities?.length>0)
-          ?fetch(`${API}/lp-data`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(lpSaved)})
-          :Promise.resolve(),
-      ]).then(()=>setDemandSyncStatus("idle")).catch(()=>setDemandSyncStatus("error"));
-    },3000);
-    return()=>clearTimeout(demandCloudSaveTimer.current);
-  },[dailyAllocation,confirmedWeeks,scheduleData,carStandards,wsHolidays,auditLog,demandVersion]);// eslint-disable-line react-hooks/exhaustive-deps
+  // ── Push All to Cloud — one button, everything in one call ───────────────
+  const pushAllToCloud=useCallback(()=>{
+    setCloudStatus("saving");
+    let lpSaved=null;try{lpSaved=JSON.parse(localStorage.getItem("labourPlanner_v1"));}catch(e){}
+    let ydpSaved=[];try{ydpSaved=JSON.parse(localStorage.getItem("ydp_plans_v1"))||[];}catch(e){}
+    const snapshot={
+      lpData:lpSaved,
+      ydpPlans:ydpSaved,
+      ydpLastPopulated:localStorage.getItem("ydp_last_populated_v1")||null,
+      dailyAllocation,confirmedWeeks,scheduleData,carStandards,wsHolidays,auditLog,
+      pushedAt:new Date().toISOString(),
+    };
+    fetch(`${API}/snapshot`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(snapshot)})
+      .then(()=>{setCloudStatus("synced");setLastPushed(snapshot.pushedAt);})
+      .catch(()=>setCloudStatus("error"));
+  },[dailyAllocation,confirmedWeeks,scheduleData,carStandards,wsHolidays,auditLog]);// eslint-disable-line react-hooks/exhaustive-deps
 
   const addAuditEntry=React.useCallback((type,label,meta={})=>{
     const entry={id:`audit_${Date.now()}_${Math.random().toString(36).slice(2,6)}`,ts:new Date().toISOString(),type,label,...meta};
@@ -627,10 +583,11 @@ export default function App() {
         ))}
         <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:"10px",padding:"8px 0"}}>
           <span style={{color:"rgba(255,255,255,0.4)",fontSize:"11px"}}>{adelaideTime}</span>
-          <span style={{fontSize:"11px",fontWeight:600,color:{idle:"#52B788",pending:"#f59e0b",saving:"#60a5fa",error:"#f87171"}[demandSyncStatus]||"#52B788"}}>
-            {{"idle":"☁ Synced","pending":"● Unsaved","saving":"⟳ Saving…","error":"⚠ No cloud"}[demandSyncStatus]}
-          </span>
-          {demandSyncStatus==="error"&&<button onClick={()=>{demandCloudLoaded.current=false;setDemandSyncStatus("saving");setDemandRetryKey(k=>k+1);}} style={{background:"#f87171",color:"white",border:"none",borderRadius:5,padding:"3px 8px",fontSize:11,cursor:"pointer",fontWeight:700}}>Retry</button>}
+          {cloudStatus==="loading"&&<span style={{fontSize:"11px",color:"#60a5fa",fontWeight:600}}>⟳ Loading…</span>}
+          {cloudStatus==="saving"&&<span style={{fontSize:"11px",color:"#60a5fa",fontWeight:600}}>⟳ Saving…</span>}
+          {cloudStatus==="synced"&&lastPushed&&<span style={{fontSize:"11px",color:"#52B788",fontWeight:600}} title={`Last pushed: ${new Date(lastPushed).toLocaleString()}`}>☁ Synced</span>}
+          {cloudStatus==="error"&&<button onClick={()=>{setCloudStatus("loading");setCloudRetryKey(k=>k+1);}} style={{background:"#f87171",color:"white",border:"none",borderRadius:5,padding:"3px 8px",fontSize:11,cursor:"pointer",fontWeight:700}}>⚠ Retry</button>}
+          <button onClick={pushAllToCloud} disabled={cloudStatus==="saving"} style={{...btn(true,"#0d7377"),fontSize:"12px",opacity:cloudStatus==="saving"?0.6:1}}>☁ Push All to Cloud</button>
           {efficiencyScore!=null&&role==="gm"&&<span style={{background:"rgba(46,204,113,0.2)",color:"#2ecc71",padding:"3px 10px",borderRadius:"12px",fontSize:"12px",fontWeight:"700",border:"1px solid rgba(46,204,113,0.4)"}}>📊 {efficiencyScore}%</span>}
           <span style={{color:"#aed6f1",fontSize:"12px",borderLeft:"1px solid rgba(255,255,255,0.2)",paddingLeft:"10px"}}>{mainSection==="labour"?(lpRole==="gm"?"👔 GM — Labour Planner":"🌱 Grower — Labour Planner"):(role==="gm"?"👔 General Manager":role==="lm"?"👷 Labour Manager":"🌱 Grower")}</span>
           <button onClick={saveData} style={{...btn(false,saved?"#27ae60":C.orange),fontSize:"12px"}}>{saved?"✓ Saved!":"💾 Save"}</button>

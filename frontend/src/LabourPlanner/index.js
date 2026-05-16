@@ -60,7 +60,7 @@ function initGreenhouses() {
 export default function LabourPlanner({ lpRole: initRole }) {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [lpRole, setLpRole] = useState(initRole || "grower");
-  const [syncStatus, setSyncStatus] = useState("idle"); // "idle" | "pending" | "saving" | "error"
+  const [syncStatus, setSyncStatus] = useState("idle");
 
   const [activities, setActivities] = useState(() => loadLS()?.activities ?? SEED_ACTIVITIES);
   const [cropCycles, setCropCycles] = useState(() => loadLS()?.cropCycles ?? initCycles());
@@ -70,48 +70,23 @@ export default function LabourPlanner({ lpRole: initRole }) {
   const [pickingData, setPickingData] = useState(() => loadLS()?.pickingData ?? []);
 
   const cloudSaveTimer = useRef(null);
-  const cloudLoaded = useRef(false);
-  const [retryKey, setRetryKey] = useState(0);
 
-  // ── Cloud load on mount: override local state if cloud has data ──────────
+  // ── Re-read from localStorage when App snapshot writes to it ────────────
+  // The App's snapshot load writes to labourPlanner_v1 then dispatches this event.
   useEffect(() => {
-    const ac = new AbortController();
-    const timeout = setTimeout(() => ac.abort(), 55000);
-    fetch(`${API}/lp-data`, { signal: ac.signal })
-      .then(r => r.json())
-      .then(data => {
-        clearTimeout(timeout);
-        const hasLPData = data && typeof data === "object" && (data.cropCycles?.length > 0 || data.greenhouses?.length > 0 || data.activities?.length > 0);
-        if (hasLPData) {
-          // Cloud has data — use it
-          if (data.activities) setActivities(data.activities);
-          if (data.cropCycles) setCropCycles(data.cropCycles);
-          if (data.greenhouses) setGreenhouses(data.greenhouses);
-          if (data.cropMasterData) setCropMasterData(data.cropMasterData);
-          if (data.pollinationData) setPollinationData(data.pollinationData);
-          if (data.pickingData) setPickingData(data.pickingData);
-          setSyncStatus("idle");
-        } else {
-          // Cloud empty — seed from current localStorage state (happens once for the owner)
-          const ls = loadLS();
-          if (ls) {
-            fetch(`${API}/lp-data`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(ls),
-            }).catch(() => {});
-          }
-          setSyncStatus("idle");
-        }
-        cloudLoaded.current = true;
-      })
-      .catch(e => {
-        clearTimeout(timeout);
-        setSyncStatus("error");
-        cloudLoaded.current = true;
-      });
-    return () => { clearTimeout(timeout); ac.abort(); };
-  }, [retryKey]); // eslint-disable-line react-hooks/exhaustive-deps
+    const handler = () => {
+      const fresh = loadLS();
+      if (!fresh) return;
+      if (fresh.activities) setActivities(fresh.activities);
+      if (fresh.cropCycles) setCropCycles(fresh.cropCycles);
+      if (fresh.greenhouses) setGreenhouses(fresh.greenhouses);
+      if (fresh.cropMasterData) setCropMasterData(fresh.cropMasterData);
+      if (fresh.pollinationData) setPollinationData(fresh.pollinationData);
+      if (fresh.pickingData) setPickingData(fresh.pickingData);
+    };
+    window.addEventListener("lp-snapshot-loaded", handler);
+    return () => window.removeEventListener("lp-snapshot-loaded", handler);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Derived state syncs (unchanged) ─────────────────────────────────────
   useEffect(() => {
