@@ -34,6 +34,8 @@ SUPABASE_HEADERS = {
     "Prefer": "return=minimal"
 }
 DATA_KEY = "greenhouse_data"
+LP_DATA_KEY = "lp_data"
+DEMAND_DATA_KEY = "demand_data"
 
 def adelaide_now():
     return datetime.now(ADELAIDE_TZ).isoformat()
@@ -60,6 +62,37 @@ def default_data():
         "quarantine": [],
         "quarantineHistory": []
     }
+
+def load_data_by_key(key):
+    """Generic key-based load from Supabase app_data table."""
+    try:
+        resp = httpx.get(
+            f"{SUPABASE_URL}/rest/v1/app_data?key=eq.{key}&select=value",
+            headers=SUPABASE_HEADERS, timeout=10
+        )
+        rows = resp.json()
+        if rows and len(rows) > 0 and rows[0].get("value"):
+            raw = rows[0]["value"]
+            if isinstance(raw, str):
+                raw = json.loads(raw)
+            return raw
+    except Exception as e:
+        print(f"Supabase load error ({key}): {e}")
+    return None
+
+def save_data_by_key(key, data):
+    """Generic key-based save to Supabase app_data table."""
+    try:
+        resp = httpx.post(
+            f"{SUPABASE_URL}/rest/v1/app_data",
+            headers={**SUPABASE_HEADERS, "Prefer": "resolution=merge-duplicates,return=minimal"},
+            json={"key": key, "value": data, "updated_at": adelaide_now()},
+            timeout=15
+        )
+        if resp.status_code not in (200, 201, 204):
+            print(f"Supabase save error ({key}): {resp.status_code} {resp.text}")
+    except Exception as e:
+        print(f"Supabase save exception ({key}): {e}")
 
 def load_data():
     try:
@@ -1642,6 +1675,30 @@ def save_cluster_transitions(payload: dict):
     data["clusterTransitions"] = payload.get("clusterTransitions", {})
     save_data(data)
     return {"message": "Cluster transitions saved", "savedAt": adelaide_now()}
+
+# ---------------------------------------------------------------------------
+# Labour Planner data (LP core: crop cycles, greenhouses, picking, pollination…)
+# ---------------------------------------------------------------------------
+@app.get("/lp-data")
+def get_lp_data():
+    return load_data_by_key(LP_DATA_KEY) or {}
+
+@app.post("/lp-data")
+def post_lp_data(payload: dict):
+    save_data_by_key(LP_DATA_KEY, payload)
+    return {"message": "LP data saved", "savedAt": adelaide_now()}
+
+# ---------------------------------------------------------------------------
+# Demand data (YDP plans, daily allocation, confirmed weeks, standards…)
+# ---------------------------------------------------------------------------
+@app.get("/demand-data")
+def get_demand_data():
+    return load_data_by_key(DEMAND_DATA_KEY) or {}
+
+@app.post("/demand-data")
+def post_demand_data(payload: dict):
+    save_data_by_key(DEMAND_DATA_KEY, payload)
+    return {"message": "Demand data saved", "savedAt": adelaide_now()}
 
 # ---------------------------------------------------------------------------
 # Migration endpoint

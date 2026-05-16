@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 code = r'''
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
 import LabourPlanner from './LabourPlanner';
 
@@ -78,6 +78,9 @@ export default function App() {
   const [scheduleData,setScheduleData]=useState(()=>{try{return JSON.parse(localStorage.getItem("ws_schedule_v1"))||{};}catch{return {};}});
   const [carStandards,setCarStandards]=useState(()=>{try{return JSON.parse(localStorage.getItem("ws_car_standards_v1"))||{};}catch{return {};}});
   const [demandVersion,setDemandVersion]=useState(0);
+  const [demandSyncStatus,setDemandSyncStatus]=useState("idle"); // "idle"|"pending"|"saving"|"error"
+  const demandCloudSaveTimer=useRef(null);
+  const demandCloudLoaded=useRef(false);
 
   useEffect(()=>{
     const tick=()=>setAdelaideTime(new Date().toLocaleString("en-AU",{timeZone:"Australia/Adelaide",weekday:"short",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:true}));
@@ -110,6 +113,74 @@ export default function App() {
   useEffect(()=>{localStorage.setItem("ws_schedule_v1",JSON.stringify(scheduleData));},[scheduleData]);
   useEffect(()=>{localStorage.setItem("ws_car_standards_v1",JSON.stringify(carStandards));},[carStandards]);
   useEffect(()=>{localStorage.setItem("ws_audit_log_v1",JSON.stringify(auditLog));},[auditLog]);
+
+  // ── Cloud load on mount: override local demand state if cloud has data ───
+  useEffect(()=>{
+    const ac=new AbortController();
+    const t=setTimeout(()=>ac.abort(),25000);
+    fetch(`${API}/demand-data`,{signal:ac.signal})
+      .then(r=>r.json())
+      .then(data=>{
+        clearTimeout(t);
+        if(data&&data.ydpPlans?.length>0){
+          // Cloud has data — apply it
+          if(data.dailyAllocation)setDailyAllocation(data.dailyAllocation);
+          if(data.confirmedWeeks)setConfirmedWeeks(data.confirmedWeeks);
+          if(data.scheduleData)setScheduleData(data.scheduleData);
+          if(data.carStandards)setCarStandards(data.carStandards);
+          if(data.wsHolidays)setWsHolidays(data.wsHolidays);
+          if(data.auditLog)setAuditLog(data.auditLog);
+          if(data.ydpPlans){localStorage.setItem("ydp_plans_v1",JSON.stringify(data.ydpPlans));}
+          if(data.ydpLastPopulated){localStorage.setItem("ydp_last_populated_v1",data.ydpLastPopulated);}
+          setDemandVersion(v=>v+1);
+          setDemandSyncStatus("idle");
+        } else {
+          // Cloud empty — seed from localStorage (owner's first sync)
+          let _da={},_cw={},_sd={},_cs={},_wh=[],_al=[],_yp=[];
+          try{_da=JSON.parse(localStorage.getItem("ws_daily_alloc_v1")||"{}");}catch(e3){}
+          try{_cw=JSON.parse(localStorage.getItem("ws_confirmed_weeks_v1")||"{}");}catch(e4){}
+          try{_sd=JSON.parse(localStorage.getItem("ws_schedule_v1")||"{}");}catch(e5){}
+          try{_cs=JSON.parse(localStorage.getItem("ws_car_standards_v1")||"{}");}catch(e6){}
+          try{_wh=JSON.parse(localStorage.getItem("ws_holidays_v1")||"[]");}catch(e7){}
+          try{_al=JSON.parse(localStorage.getItem("ws_audit_log_v1")||"[]");}catch(e8){}
+          try{_yp=JSON.parse(localStorage.getItem("ydp_plans_v1")||"[]");}catch(e9){}
+          const seedPayload={
+            dailyAllocation:_da,confirmedWeeks:_cw,scheduleData:_sd,
+            carStandards:_cs,wsHolidays:_wh,auditLog:_al,ydpPlans:_yp,
+            ydpLastPopulated:localStorage.getItem("ydp_last_populated_v1")||null,
+          };
+          fetch(`${API}/demand-data`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(seedPayload)}).catch(()=>{});
+          setDemandSyncStatus("idle");
+        }
+        demandCloudLoaded.current=true;
+      })
+      .catch(e=>{clearTimeout(t);if(e.name!=="AbortError")setDemandSyncStatus("error");demandCloudLoaded.current=true;});
+    // Listen for YDP plan saves and trigger cloud save
+    const ydpHandler=()=>{if(demandCloudLoaded.current)setDemandVersion(v=>v+1);};
+    window.addEventListener("ydp-plans-changed",ydpHandler);
+    return()=>{clearTimeout(t);ac.abort();window.removeEventListener("ydp-plans-changed",ydpHandler);};
+  },[]);// eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Debounced demand cloud save ───────────────────────────────────────────
+  useEffect(()=>{
+    if(!demandCloudLoaded.current)return;
+    setDemandSyncStatus("pending");
+    if(demandCloudSaveTimer.current)clearTimeout(demandCloudSaveTimer.current);
+    demandCloudSaveTimer.current=setTimeout(()=>{
+      setDemandSyncStatus("saving");
+      let ydpSaved=[];
+      try{ydpSaved=JSON.parse(localStorage.getItem("ydp_plans_v1"))||[];}catch(e2){}
+      const payload={
+        dailyAllocation,confirmedWeeks,scheduleData,carStandards,wsHolidays,auditLog,
+        ydpPlans:ydpSaved,
+        ydpLastPopulated:localStorage.getItem("ydp_last_populated_v1")||null,
+      };
+      fetch(`${API}/demand-data`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)})
+        .then(()=>setDemandSyncStatus("idle"))
+        .catch(()=>setDemandSyncStatus("error"));
+    },3000);
+    return()=>clearTimeout(demandCloudSaveTimer.current);
+  },[dailyAllocation,confirmedWeeks,scheduleData,carStandards,wsHolidays,auditLog,demandVersion]);// eslint-disable-line react-hooks/exhaustive-deps
 
   const addAuditEntry=React.useCallback((type,label,meta={})=>{
     const entry={id:`audit_${Date.now()}_${Math.random().toString(36).slice(2,6)}`,ts:new Date().toISOString(),type,label,...meta};
@@ -534,6 +605,9 @@ export default function App() {
         ))}
         <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:"10px",padding:"8px 0"}}>
           <span style={{color:"rgba(255,255,255,0.4)",fontSize:"11px"}}>{adelaideTime}</span>
+          <span style={{fontSize:"11px",fontWeight:600,color:{idle:"#52B788",pending:"#f59e0b",saving:"#60a5fa",error:"#f87171"}[demandSyncStatus]||"#52B788"}}>
+            {{"idle":"☁ Synced","pending":"● Unsaved","saving":"⟳ Saving…","error":"⚠ Local only"}[demandSyncStatus]}
+          </span>
           {efficiencyScore!=null&&role==="gm"&&<span style={{background:"rgba(46,204,113,0.2)",color:"#2ecc71",padding:"3px 10px",borderRadius:"12px",fontSize:"12px",fontWeight:"700",border:"1px solid rgba(46,204,113,0.4)"}}>📊 {efficiencyScore}%</span>}
           <span style={{color:"#aed6f1",fontSize:"12px",borderLeft:"1px solid rgba(255,255,255,0.2)",paddingLeft:"10px"}}>{mainSection==="labour"?(lpRole==="gm"?"👔 GM — Labour Planner":"🌱 Grower — Labour Planner"):(role==="gm"?"👔 General Manager":role==="lm"?"👷 Labour Manager":"🌱 Grower")}</span>
           <button onClick={saveData} style={{...btn(false,saved?"#27ae60":C.orange),fontSize:"12px"}}>{saved?"✓ Saved!":"💾 Save"}</button>
@@ -710,7 +784,7 @@ export default function App() {
             dailyAllocation={dailyAllocation} setDailyAllocation={setDailyAllocation}
             confirmedWeeks={confirmedWeeks} setConfirmedWeeks={setConfirmedWeeks}
             carStandards={carStandards} setCarStandards={setCarStandards}
-            setDemandVersion={setDemandVersion}
+            setDemandVersion={setDemandVersion} demandVersion={demandVersion}
             addAuditEntry={addAuditEntry}
             role={role}
             btn={btn} inp={inp} card={card} C={C}/>
@@ -1095,9 +1169,9 @@ function SchedulePage({scheduleData,setScheduleData,dailyAllocation,confirmedWee
   const addD=(iso,n)=>{const d=new Date(iso);d.setDate(d.getDate()+n);return d.toISOString().split("T")[0];};
   const fmtD=(iso)=>{if(!iso)return"";const d=new Date(iso);return d.toLocaleDateString("en-AU",{day:"2-digit",month:"short"});};
 
-  // Load YDP plans + GH name map
-  const ydpPlans=React.useMemo(()=>{try{return JSON.parse(localStorage.getItem("ydp_plans_v1"))||[];}catch{return [];}});
-  const ghNameMap=React.useMemo(()=>{try{const lp=JSON.parse(localStorage.getItem("labourPlanner_v1"))||{};const m={};(lp.greenhouses||[]).forEach(gh=>{m[gh.id]=gh.name;});return m;}catch{return {};}});
+  // Load YDP plans + GH name map — re-read when demandVersion changes (cloud sync)
+  const ydpPlans=React.useMemo(()=>{try{return JSON.parse(localStorage.getItem("ydp_plans_v1"))||[];}catch{return [];}},[demandVersion]);
+  const ghNameMap=React.useMemo(()=>{try{const lp=JSON.parse(localStorage.getItem("labourPlanner_v1"))||{};const m={};(lp.greenhouses||[]).forEach(gh=>{m[gh.id]=gh.name;});return m;}catch{return {};}},[demandVersion]);
   const ghCropsMap=React.useMemo(()=>{
     const m={};
     ydpPlans.forEach(p=>{const n=ghNameMap[p.ghId]||p.ghId;if(!m[n])m[n]=[];if(p.cropName&&!m[n].includes(p.cropName))m[n].push(p.cropName);});
@@ -1617,7 +1691,7 @@ function SchedulePage({scheduleData,setScheduleData,dailyAllocation,confirmedWee
 // ═══════════════════════════════════════════════════════════════════════════════
 // DEMAND PAGE — splits YDP weekly hours into daily allocations per GH
 // ═══════════════════════════════════════════════════════════════════════════════
-function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation,confirmedWeeks,setConfirmedWeeks,carStandards,setCarStandards,setDemandVersion,addAuditEntry,role,btn,inp,card,C}){
+function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation,confirmedWeeks,setConfirmedWeeks,carStandards,setCarStandards,setDemandVersion,demandVersion,addAuditEntry,role,btn,inp,card,C}){
   const [demandSubTab,setDemandSubTab]=React.useState("weekly");
   const [selGHId,setSelGHId]=React.useState(null);       // weekly planner
   const [selPlanId,setSelPlanId]=React.useState(null);    // weekly planner
@@ -1642,9 +1716,9 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
     return FULL_DAYS.slice(0,Math.min(n,7));
   };
 
-  // Load YDP plans, GH name map, LP data from localStorage
-  const ydpPlans=React.useMemo(()=>{try{return JSON.parse(localStorage.getItem("ydp_plans_v1"))||[];}catch{return [];}});
-  const lpData=React.useMemo(()=>{try{return JSON.parse(localStorage.getItem("labourPlanner_v1"))||{};}catch{return {};}});
+  // Load YDP plans, GH name map, LP data from localStorage — re-read when demandVersion changes (cloud sync)
+  const ydpPlans=React.useMemo(()=>{try{return JSON.parse(localStorage.getItem("ydp_plans_v1"))||[];}catch{return [];}},[demandVersion]);
+  const lpData=React.useMemo(()=>{try{return JSON.parse(localStorage.getItem("labourPlanner_v1"))||{};}catch{return {};}},[demandVersion]);
   const ghNameMap=React.useMemo(()=>{
     const m={};(lpData.greenhouses||[]).forEach(gh=>{m[gh.id]=gh.name;});return m;
   },[lpData]);

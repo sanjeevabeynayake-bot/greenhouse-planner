@@ -9,6 +9,7 @@ function loadPlans() {
 }
 function savePlans(plans) {
   localStorage.setItem(PLANS_KEY, JSON.stringify(plans));
+  window.dispatchEvent(new CustomEvent("ydp-plans-changed"));
 }
 
 // ─── Date helpers ──────────────────────────────────────────────────

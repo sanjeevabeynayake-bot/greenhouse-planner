@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { SEED_CROPS, SEED_ACTIVITIES, SEED_GREENHOUSES } from "../data/masterSeeds";
 import { LP, lpBtn } from "./styles";
 import LPDashboard from "./LPDashboard";
@@ -8,6 +8,8 @@ import CropMaster from "./CropMaster";
 import PollinationMaster from "./PollinationMaster";
 import PickingMaster from "./PickingMaster";
 import YearlyDemandPlanner from "./YearlyDemandPlanner";
+
+const API = "https://greenhouse-planner-backend.onrender.com";
 
 const MASTER_TABS = [
   { id: "dashboard",   label: "Dashboard",             icon: "🏠" },
@@ -58,6 +60,7 @@ function initGreenhouses() {
 export default function LabourPlanner({ lpRole: initRole }) {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [lpRole, setLpRole] = useState(initRole || "grower");
+  const [syncStatus, setSyncStatus] = useState("idle"); // "idle" | "pending" | "saving" | "error"
 
   const [activities, setActivities] = useState(() => loadLS()?.activities ?? SEED_ACTIVITIES);
   const [cropCycles, setCropCycles] = useState(() => loadLS()?.cropCycles ?? initCycles());
@@ -66,6 +69,49 @@ export default function LabourPlanner({ lpRole: initRole }) {
   const [pollinationData, setPollinationData] = useState(() => loadLS()?.pollinationData ?? []);
   const [pickingData, setPickingData] = useState(() => loadLS()?.pickingData ?? []);
 
+  const cloudSaveTimer = useRef(null);
+  const cloudLoaded = useRef(false);
+
+  // ── Cloud load on mount: override local state if cloud has data ──────────
+  useEffect(() => {
+    const ac = new AbortController();
+    const timeout = setTimeout(() => ac.abort(), 25000);
+    fetch(`${API}/lp-data`, { signal: ac.signal })
+      .then(r => r.json())
+      .then(data => {
+        clearTimeout(timeout);
+        if (data && typeof data === "object" && data.cropCycles?.length > 0) {
+          // Cloud has data — use it
+          if (data.activities) setActivities(data.activities);
+          if (data.cropCycles) setCropCycles(data.cropCycles);
+          if (data.greenhouses) setGreenhouses(data.greenhouses);
+          if (data.cropMasterData) setCropMasterData(data.cropMasterData);
+          if (data.pollinationData) setPollinationData(data.pollinationData);
+          if (data.pickingData) setPickingData(data.pickingData);
+          setSyncStatus("idle");
+        } else {
+          // Cloud empty — seed from current localStorage state (happens once for the owner)
+          const ls = loadLS();
+          if (ls) {
+            fetch(`${API}/lp-data`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(ls),
+            }).catch(() => {});
+          }
+          setSyncStatus("idle");
+        }
+        cloudLoaded.current = true;
+      })
+      .catch(e => {
+        clearTimeout(timeout);
+        if (e.name !== "AbortError") setSyncStatus("error");
+        cloudLoaded.current = true;
+      });
+    return () => { clearTimeout(timeout); ac.abort(); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Derived state syncs (unchanged) ─────────────────────────────────────
   useEffect(() => {
     setCropMasterData(prev => {
       const map = Object.fromEntries(prev.map(d => [d.cropId, d]));
@@ -91,11 +137,30 @@ export default function LabourPlanner({ lpRole: initRole }) {
     });
   }, [greenhouses]);
 
+  // ── localStorage save (immediate) ───────────────────────────────────────
   useEffect(() => {
     localStorage.setItem(LS_KEY, JSON.stringify({
       activities, cropCycles, greenhouses, cropMasterData, pollinationData, pickingData,
     }));
   }, [activities, cropCycles, greenhouses, cropMasterData, pollinationData, pickingData]);
+
+  // ── Debounced cloud save (3s after last change) ──────────────────────────
+  useEffect(() => {
+    if (!cloudLoaded.current) return; // don't save until initial cloud load resolves
+    setSyncStatus("pending");
+    if (cloudSaveTimer.current) clearTimeout(cloudSaveTimer.current);
+    cloudSaveTimer.current = setTimeout(() => {
+      setSyncStatus("saving");
+      fetch(`${API}/lp-data`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ activities, cropCycles, greenhouses, cropMasterData, pollinationData, pickingData }),
+      })
+        .then(() => setSyncStatus("idle"))
+        .catch(() => setSyncStatus("error"));
+    }, 3000);
+    return () => clearTimeout(cloudSaveTimer.current);
+  }, [activities, cropCycles, greenhouses, cropMasterData, pollinationData, pickingData]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const sharedProps = {
     activities, setActivities,
@@ -106,6 +171,13 @@ export default function LabourPlanner({ lpRole: initRole }) {
     pickingData, setPickingData,
     lpRole, LP,
   };
+
+  const syncBadge = {
+    idle:    { text: "☁ Synced",   color: "#52B788" },
+    pending: { text: "● Unsaved",  color: "#f59e0b" },
+    saving:  { text: "⟳ Saving…", color: "#60a5fa" },
+    error:   { text: "⚠ Local only", color: "#f87171" },
+  }[syncStatus];
 
   return (
     <div style={{
@@ -138,11 +210,15 @@ export default function LabourPlanner({ lpRole: initRole }) {
           ))}
         </div>
         <div style={{
-          display: "flex", alignItems: "center", gap: 6,
+          display: "flex", alignItems: "center", gap: 10,
           padding: "0 4px 0 16px",
           borderLeft: "1px solid rgba(255,255,255,0.14)",
           flexShrink: 0,
         }}>
+          {/* Cloud sync badge */}
+          <span style={{ fontSize: 11, color: syncBadge.color, whiteSpace: "nowrap", fontWeight: 600 }}>
+            {syncBadge.text}
+          </span>
           <span style={{ color: "rgba(255,255,255,0.42)", fontSize: 11, whiteSpace: "nowrap" }}>View:</span>
           {[{ id: "gm", label: "👔 GM" }, { id: "grower", label: "🌱 Grower" }].map(r => (
             <button key={r.id} onClick={() => setLpRole(r.id)} style={{
