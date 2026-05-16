@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { SEED_CROPS, SEED_ACTIVITIES, SEED_GREENHOUSES } from "../data/masterSeeds";
 import { LP, lpBtn } from "./styles";
 import LPDashboard from "./LPDashboard";
@@ -8,8 +8,6 @@ import CropMaster from "./CropMaster";
 import PollinationMaster from "./PollinationMaster";
 import PickingMaster from "./PickingMaster";
 import YearlyDemandPlanner from "./YearlyDemandPlanner";
-
-const API = "https://greenhouse-planner-backend.onrender.com";
 
 const MASTER_TABS = [
   { id: "dashboard",   label: "Dashboard",             icon: "🏠" },
@@ -60,7 +58,6 @@ function initGreenhouses() {
 export default function LabourPlanner({ lpRole: initRole }) {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [lpRole, setLpRole] = useState(initRole || "grower");
-  const [syncStatus, setSyncStatus] = useState("idle");
 
   const [activities, setActivities] = useState(() => loadLS()?.activities ?? SEED_ACTIVITIES);
   const [cropCycles, setCropCycles] = useState(() => loadLS()?.cropCycles ?? initCycles());
@@ -69,10 +66,7 @@ export default function LabourPlanner({ lpRole: initRole }) {
   const [pollinationData, setPollinationData] = useState(() => loadLS()?.pollinationData ?? []);
   const [pickingData, setPickingData] = useState(() => loadLS()?.pickingData ?? []);
 
-  const cloudSaveTimer = useRef(null);
-
-  // ── Re-read from localStorage when App snapshot writes to it ────────────
-  // The App's snapshot load writes to labourPlanner_v1 then dispatches this event.
+  // When App's snapshot load writes labourPlanner_v1 to localStorage, re-read it here
   useEffect(() => {
     const handler = () => {
       const fresh = loadLS();
@@ -86,9 +80,8 @@ export default function LabourPlanner({ lpRole: initRole }) {
     };
     window.addEventListener("lp-snapshot-loaded", handler);
     return () => window.removeEventListener("lp-snapshot-loaded", handler);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
-  // ── Derived state syncs (unchanged) ─────────────────────────────────────
   useEffect(() => {
     setCropMasterData(prev => {
       const map = Object.fromEntries(prev.map(d => [d.cropId, d]));
@@ -114,30 +107,12 @@ export default function LabourPlanner({ lpRole: initRole }) {
     });
   }, [greenhouses]);
 
-  // ── localStorage save (immediate) ───────────────────────────────────────
+  // Save to localStorage whenever any LP state changes
   useEffect(() => {
     localStorage.setItem(LS_KEY, JSON.stringify({
       activities, cropCycles, greenhouses, cropMasterData, pollinationData, pickingData,
     }));
   }, [activities, cropCycles, greenhouses, cropMasterData, pollinationData, pickingData]);
-
-  // ── Debounced cloud save (3s after last change) ──────────────────────────
-  useEffect(() => {
-    if (!cloudLoaded.current) return; // don't save until initial cloud load resolves
-    setSyncStatus("pending");
-    if (cloudSaveTimer.current) clearTimeout(cloudSaveTimer.current);
-    cloudSaveTimer.current = setTimeout(() => {
-      setSyncStatus("saving");
-      fetch(`${API}/lp-data`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ activities, cropCycles, greenhouses, cropMasterData, pollinationData, pickingData }),
-      })
-        .then(() => setSyncStatus("idle"))
-        .catch(() => setSyncStatus("error"));
-    }, 3000);
-    return () => clearTimeout(cloudSaveTimer.current);
-  }, [activities, cropCycles, greenhouses, cropMasterData, pollinationData, pickingData]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const sharedProps = {
     activities, setActivities,
@@ -147,19 +122,6 @@ export default function LabourPlanner({ lpRole: initRole }) {
     pollinationData, setPollinationData,
     pickingData, setPickingData,
     lpRole, LP,
-  };
-
-  const syncBadge = {
-    idle:    { text: "☁ Synced",   color: "#52B788" },
-    pending: { text: "● Unsaved",  color: "#f59e0b" },
-    saving:  { text: "⟳ Saving…", color: "#60a5fa" },
-    error:   { text: "⚠ No cloud", color: "#f87171" },
-  }[syncStatus];
-
-  const retryCloudSync = () => {
-    cloudLoaded.current = false;
-    setSyncStatus("saving");
-    setRetryKey(k => k + 1);
   };
 
   return (
@@ -193,20 +155,11 @@ export default function LabourPlanner({ lpRole: initRole }) {
           ))}
         </div>
         <div style={{
-          display: "flex", alignItems: "center", gap: 10,
+          display: "flex", alignItems: "center", gap: 6,
           padding: "0 4px 0 16px",
           borderLeft: "1px solid rgba(255,255,255,0.14)",
           flexShrink: 0,
         }}>
-          {/* Cloud sync badge */}
-          <span style={{ fontSize: 11, color: syncBadge.color, whiteSpace: "nowrap", fontWeight: 600 }}>
-            {syncBadge.text}
-          </span>
-          {syncStatus === "error" && (
-            <button onClick={retryCloudSync} style={{ background: "#f87171", color: "white", border: "none", borderRadius: 5, padding: "4px 10px", fontSize: 11, cursor: "pointer", fontWeight: 700 }}>
-              Retry
-            </button>
-          )}
           <span style={{ color: "rgba(255,255,255,0.42)", fontSize: 11, whiteSpace: "nowrap" }}>View:</span>
           {[{ id: "gm", label: "👔 GM" }, { id: "grower", label: "🌱 Grower" }].map(r => (
             <button key={r.id} onClick={() => setLpRole(r.id)} style={{
