@@ -71,16 +71,18 @@ export default function LabourPlanner({ lpRole: initRole }) {
 
   const cloudSaveTimer = useRef(null);
   const cloudLoaded = useRef(false);
+  const [retryKey, setRetryKey] = useState(0);
 
   // ── Cloud load on mount: override local state if cloud has data ──────────
   useEffect(() => {
     const ac = new AbortController();
-    const timeout = setTimeout(() => ac.abort(), 25000);
+    const timeout = setTimeout(() => ac.abort(), 55000);
     fetch(`${API}/lp-data`, { signal: ac.signal })
       .then(r => r.json())
       .then(data => {
         clearTimeout(timeout);
-        if (data && typeof data === "object" && data.cropCycles?.length > 0) {
+        const hasLPData = data && typeof data === "object" && (data.cropCycles?.length > 0 || data.greenhouses?.length > 0 || data.activities?.length > 0);
+        if (hasLPData) {
           // Cloud has data — use it
           if (data.activities) setActivities(data.activities);
           if (data.cropCycles) setCropCycles(data.cropCycles);
@@ -105,11 +107,11 @@ export default function LabourPlanner({ lpRole: initRole }) {
       })
       .catch(e => {
         clearTimeout(timeout);
-        if (e.name !== "AbortError") setSyncStatus("error");
+        setSyncStatus("error");
         cloudLoaded.current = true;
       });
     return () => { clearTimeout(timeout); ac.abort(); };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [retryKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Derived state syncs (unchanged) ─────────────────────────────────────
   useEffect(() => {
@@ -176,8 +178,14 @@ export default function LabourPlanner({ lpRole: initRole }) {
     idle:    { text: "☁ Synced",   color: "#52B788" },
     pending: { text: "● Unsaved",  color: "#f59e0b" },
     saving:  { text: "⟳ Saving…", color: "#60a5fa" },
-    error:   { text: "⚠ Local only", color: "#f87171" },
+    error:   { text: "⚠ No cloud", color: "#f87171" },
   }[syncStatus];
+
+  const retryCloudSync = () => {
+    cloudLoaded.current = false;
+    setSyncStatus("saving");
+    setRetryKey(k => k + 1);
+  };
 
   return (
     <div style={{
@@ -219,6 +227,11 @@ export default function LabourPlanner({ lpRole: initRole }) {
           <span style={{ fontSize: 11, color: syncBadge.color, whiteSpace: "nowrap", fontWeight: 600 }}>
             {syncBadge.text}
           </span>
+          {syncStatus === "error" && (
+            <button onClick={retryCloudSync} style={{ background: "#f87171", color: "white", border: "none", borderRadius: 5, padding: "4px 10px", fontSize: 11, cursor: "pointer", fontWeight: 700 }}>
+              Retry
+            </button>
+          )}
           <span style={{ color: "rgba(255,255,255,0.42)", fontSize: 11, whiteSpace: "nowrap" }}>View:</span>
           {[{ id: "gm", label: "👔 GM" }, { id: "grower", label: "🌱 Grower" }].map(r => (
             <button key={r.id} onClick={() => setLpRole(r.id)} style={{

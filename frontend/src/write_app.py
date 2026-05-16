@@ -79,6 +79,7 @@ export default function App() {
   const [carStandards,setCarStandards]=useState(()=>{try{return JSON.parse(localStorage.getItem("ws_car_standards_v1"))||{};}catch{return {};}});
   const [demandVersion,setDemandVersion]=useState(0);
   const [demandSyncStatus,setDemandSyncStatus]=useState("idle"); // "idle"|"pending"|"saving"|"error"
+  const [demandRetryKey,setDemandRetryKey]=useState(0);
   const demandCloudSaveTimer=useRef(null);
   const demandCloudLoaded=useRef(false);
 
@@ -117,12 +118,13 @@ export default function App() {
   // ── Cloud load on mount: override local demand state if cloud has data ───
   useEffect(()=>{
     const ac=new AbortController();
-    const t=setTimeout(()=>ac.abort(),25000);
+    const t=setTimeout(()=>ac.abort(),55000);
     fetch(`${API}/demand-data`,{signal:ac.signal})
       .then(r=>r.json())
       .then(data=>{
         clearTimeout(t);
-        if(data&&data.ydpPlans?.length>0){
+        const hasCloudData=data&&typeof data==="object"&&(data.ydpPlans?.length>0||Object.keys(data.dailyAllocation||{}).length>0||Object.keys(data.confirmedWeeks||{}).length>0||Object.keys(data.carStandards||{}).length>0);
+        if(hasCloudData){
           // Cloud has data — apply it
           if(data.dailyAllocation)setDailyAllocation(data.dailyAllocation);
           if(data.confirmedWeeks)setConfirmedWeeks(data.confirmedWeeks);
@@ -154,12 +156,12 @@ export default function App() {
         }
         demandCloudLoaded.current=true;
       })
-      .catch(e=>{clearTimeout(t);if(e.name!=="AbortError")setDemandSyncStatus("error");demandCloudLoaded.current=true;});
+      .catch(e=>{clearTimeout(t);setDemandSyncStatus("error");demandCloudLoaded.current=true;});
     // Listen for YDP plan saves and trigger cloud save
     const ydpHandler=()=>{if(demandCloudLoaded.current)setDemandVersion(v=>v+1);};
     window.addEventListener("ydp-plans-changed",ydpHandler);
     return()=>{clearTimeout(t);ac.abort();window.removeEventListener("ydp-plans-changed",ydpHandler);};
-  },[]);// eslint-disable-line react-hooks/exhaustive-deps
+  },[demandRetryKey]);// eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Debounced demand cloud save ───────────────────────────────────────────
   useEffect(()=>{
@@ -606,8 +608,9 @@ export default function App() {
         <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:"10px",padding:"8px 0"}}>
           <span style={{color:"rgba(255,255,255,0.4)",fontSize:"11px"}}>{adelaideTime}</span>
           <span style={{fontSize:"11px",fontWeight:600,color:{idle:"#52B788",pending:"#f59e0b",saving:"#60a5fa",error:"#f87171"}[demandSyncStatus]||"#52B788"}}>
-            {{"idle":"☁ Synced","pending":"● Unsaved","saving":"⟳ Saving…","error":"⚠ Local only"}[demandSyncStatus]}
+            {{"idle":"☁ Synced","pending":"● Unsaved","saving":"⟳ Saving…","error":"⚠ No cloud"}[demandSyncStatus]}
           </span>
+          {demandSyncStatus==="error"&&<button onClick={()=>{demandCloudLoaded.current=false;setDemandSyncStatus("saving");setDemandRetryKey(k=>k+1);}} style={{background:"#f87171",color:"white",border:"none",borderRadius:5,padding:"3px 8px",fontSize:11,cursor:"pointer",fontWeight:700}}>Retry</button>}
           {efficiencyScore!=null&&role==="gm"&&<span style={{background:"rgba(46,204,113,0.2)",color:"#2ecc71",padding:"3px 10px",borderRadius:"12px",fontSize:"12px",fontWeight:"700",border:"1px solid rgba(46,204,113,0.4)"}}>📊 {efficiencyScore}%</span>}
           <span style={{color:"#aed6f1",fontSize:"12px",borderLeft:"1px solid rgba(255,255,255,0.2)",paddingLeft:"10px"}}>{mainSection==="labour"?(lpRole==="gm"?"👔 GM — Labour Planner":"🌱 Grower — Labour Planner"):(role==="gm"?"👔 General Manager":role==="lm"?"👷 Labour Manager":"🌱 Grower")}</span>
           <button onClick={saveData} style={{...btn(false,saved?"#27ae60":C.orange),fontSize:"12px"}}>{saved?"✓ Saved!":"💾 Save"}</button>
