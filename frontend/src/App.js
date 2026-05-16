@@ -71,6 +71,8 @@ export default function App() {
   const [dailyAllocation,setDailyAllocation]=useState(()=>{try{return JSON.parse(localStorage.getItem("ws_daily_alloc_v1"))||{};}catch{return {};}});
   const [confirmedWeeks,setConfirmedWeeks]=useState(()=>{try{return JSON.parse(localStorage.getItem("ws_confirmed_weeks_v1"))||{};}catch{return {};}});
   const [scheduleData,setScheduleData]=useState(()=>{try{return JSON.parse(localStorage.getItem("ws_schedule_v1"))||{};}catch{return {};}});
+  const [carStandards,setCarStandards]=useState(()=>{try{return JSON.parse(localStorage.getItem("ws_car_standards_v1"))||{};}catch{return {};}});
+  const [demandVersion,setDemandVersion]=useState(0);
 
   useEffect(()=>{
     const tick=()=>setAdelaideTime(new Date().toLocaleString("en-AU",{timeZone:"Australia/Adelaide",weekday:"short",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:true}));
@@ -101,6 +103,7 @@ export default function App() {
   useEffect(()=>{localStorage.setItem("ws_daily_alloc_v1",JSON.stringify(dailyAllocation));},[dailyAllocation]);
   useEffect(()=>{localStorage.setItem("ws_confirmed_weeks_v1",JSON.stringify(confirmedWeeks));},[confirmedWeeks]);
   useEffect(()=>{localStorage.setItem("ws_schedule_v1",JSON.stringify(scheduleData));},[scheduleData]);
+  useEffect(()=>{localStorage.setItem("ws_car_standards_v1",JSON.stringify(carStandards));},[carStandards]);
 
   const normaliseGH=(gh)=>{if(typeof gh==="string")return{id:gh,name:gh,cropTypes:[]};return{id:gh.id||gh.name||"",name:gh.name||gh.id||"",cropTypes:gh.cropTypes||[]};};
   const normaliseStaff=(s)=>({cropTypes:s.cropTypes!==undefined?s.cropTypes:[],cropActivities:s.cropActivities!==undefined?s.cropActivities:{},...s});
@@ -640,6 +643,8 @@ export default function App() {
             wsHolidays={wsHolidays} setWsHolidays={setWsHolidays}
             dailyAllocation={dailyAllocation} setDailyAllocation={setDailyAllocation}
             confirmedWeeks={confirmedWeeks} setConfirmedWeeks={setConfirmedWeeks}
+            carStandards={carStandards} setCarStandards={setCarStandards}
+            setDemandVersion={setDemandVersion}
             role={role}
             btn={btn} inp={inp} card={card} C={C}/>
         )}
@@ -649,6 +654,7 @@ export default function App() {
           <SchedulePage
             scheduleData={scheduleData} setScheduleData={setScheduleData}
             dailyAllocation={dailyAllocation} confirmedWeeks={confirmedWeeks}
+            demandVersion={demandVersion}
             staff={staff} absences={absences}
             clusters={clusters} clusterTransitions={clusterTransitions}
             quarantine={quarantine}
@@ -928,7 +934,7 @@ function ClusterTransitionUI({clusters,setClusters,clusterTransitions,setCluster
 // ═══════════════════════════════════════════════════════════════════════════════
 // SCHEDULE PAGE — three views (GH / Staff / Activity) over CP-SAT assignments
 // ═══════════════════════════════════════════════════════════════════════════════
-function SchedulePage({scheduleData,setScheduleData,dailyAllocation,confirmedWeeks,staff,absences,clusters,clusterTransitions,quarantine,role,btn,inp,card,C,API}){
+function SchedulePage({scheduleData,setScheduleData,dailyAllocation,confirmedWeeks,demandVersion,staff,absences,clusters,clusterTransitions,quarantine,role,btn,inp,card,C,API}){
   const DAYS=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
   const DAY_S={Monday:"Mon",Tuesday:"Tue",Wednesday:"Wed",Thursday:"Thu",Friday:"Fri",Saturday:"Sat",Sunday:"Sun"};
 
@@ -1036,6 +1042,17 @@ function SchedulePage({scheduleData,setScheduleData,dailyAllocation,confirmedWee
     setRunning(false);
   };
 
+  // Auto-run: when a week is selected with no schedule, or demand version bumps
+  const autoRunRef=React.useRef(null);
+  React.useEffect(()=>{
+    if(!selWeek||running)return;
+    if(autoRunRef.current)clearTimeout(autoRunRef.current);
+    const hasSchedule=!!scheduleData[selWeek];
+    const delay=hasSchedule?4000:800;
+    autoRunRef.current=setTimeout(()=>runOptimiser(),delay);
+    return()=>{if(autoRunRef.current)clearTimeout(autoRunRef.current);};
+  },[selWeek,demandVersion]);
+
   const weekData=selWeek?scheduleData[selWeek]:null;
   const assignments=weekData?.assignments||[];
   const summary=weekData?.summary||{};
@@ -1076,20 +1093,10 @@ function SchedulePage({scheduleData,setScheduleData,dailyAllocation,confirmedWee
     </tr>
   );
 
-  // Editable hour cell
+  // Read-only hour cell (schedule is auto-managed by CP-SAT)
   const HrsCell=({a,style={}})=>{
-    const k=`${a.staffId}__${a.greenhouse}__${a.activity}__${a.day}`;
-    const editing=editCell===k;
     const h=getHours(a);
-    return editing
-      ?<input type="number" min="0" step="0.5" autoFocus defaultValue={h}
-          onBlur={e=>{setHours(a,e.target.value);setEditCell(null);}}
-          onKeyDown={e=>{if(e.key==="Enter"){setHours(a,e.target.value);setEditCell(null);}if(e.key==="Escape")setEditCell(null);}}
-          style={{width:"55px",padding:"3px 5px",border:`1px solid ${C.teal}`,borderRadius:"4px",textAlign:"center",fontSize:"12px"}}/>
-      :<span onClick={()=>setEditCell(k)} title="Click to edit"
-          style={{cursor:"pointer",fontWeight:"700",color:weekOverrides[k]!=null?"#7c3aed":C.navy,borderBottom:`1px dashed ${weekOverrides[k]!=null?"#7c3aed":C.border}`,...style}}>
-          {h}h
-        </span>;
+    return <span style={{fontWeight:"700",color:C.navy,...style}}>{h}h</span>;
   };
 
   return(
@@ -1124,12 +1131,11 @@ function SchedulePage({scheduleData,setScheduleData,dailyAllocation,confirmedWee
             </button>
           );
         })}
-        {selWeek&&(
-          <button onClick={runOptimiser} disabled={running}
-            style={{...btn(true,C.teal),padding:"8px 18px",fontSize:"13px",opacity:running?0.7:1,marginLeft:"8px"}}>
-            {running?"⏳ Optimising (CP-SAT)...":"⚡ Run CP-SAT Optimiser"}
-          </button>
-        )}
+        {running&&<span style={{marginLeft:"8px",fontSize:"12px",color:C.teal,fontWeight:"600",display:"flex",alignItems:"center",gap:"6px"}}>
+          <span style={{display:"inline-block",width:"12px",height:"12px",border:`2px solid ${C.teal}`,borderTopColor:"transparent",borderRadius:"50%",animation:"spin 0.8s linear infinite"}}/>
+          CP-SAT optimising…
+        </span>}
+        {!running&&selWeek&&<span style={{marginLeft:"8px",fontSize:"11px",color:C.textLight,fontStyle:"italic"}}>⚡ CP-SAT optimiser active — schedule updates automatically</span>}
       </div>
 
       {!selWeek?(
@@ -1466,31 +1472,35 @@ function SchedulePage({scheduleData,setScheduleData,dailyAllocation,confirmedWee
 // ═══════════════════════════════════════════════════════════════════════════════
 // DEMAND PAGE — splits YDP weekly hours into daily allocations per GH
 // ═══════════════════════════════════════════════════════════════════════════════
-function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation,confirmedWeeks,setConfirmedWeeks,role,btn,inp,card,C}){
+function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation,confirmedWeeks,setConfirmedWeeks,carStandards,setCarStandards,setDemandVersion,role,btn,inp,card,C}){
   const [demandSubTab,setDemandSubTab]=React.useState("weekly");
   const [selGHId,setSelGHId]=React.useState(null);
   const [selPlanId,setSelPlanId]=React.useState(null);
   const [selWeekIdx,setSelWeekIdx]=React.useState(0);
   const [holidayForm,setHolidayForm]=React.useState({date:"",scope:"all",ghName:"",label:""});
 
+  const FULL_DAYS=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
   const DAYS=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
-  const WEIGHTS={Mon:1,Tue:1,Wed:1,Thu:1,Fri:1,Sat:0.8,Sun:0.8};
+  const DAY_SHORT={Monday:"Mon",Tuesday:"Tue",Wednesday:"Wed",Thursday:"Thu",Friday:"Fri",Saturday:"Sat",Sunday:"Sun"};
   const SPECIAL=["Picking","Pollination"];
 
   const addD=(iso,n)=>{const d=new Date(iso);d.setDate(d.getDate()+n);return d.toISOString().split("T")[0];};
   const fmtD=(iso)=>{if(!iso)return"";const d=new Date(iso);return d.toLocaleDateString("en-AU",{day:"2-digit",month:"short"});};
   const getCell=(cell)=>cell?.isManual?(parseFloat(cell.manualHours)||0):(parseFloat(cell?.hours)||0);
 
-  // Load YDP plans and GH name map from localStorage
+  const defaultDaysFor=(n)=>{
+    if(n===1)return Math.random()<0.5?["Tuesday"]:["Thursday"];
+    if(n===2)return["Monday","Wednesday"];
+    if(n===3)return["Monday","Thursday","Friday"];
+    return FULL_DAYS.slice(0,Math.min(n,7));
+  };
+
+  // Load YDP plans, GH name map, LP data from localStorage
   const ydpPlans=React.useMemo(()=>{try{return JSON.parse(localStorage.getItem("ydp_plans_v1"))||[];}catch{return [];}});
+  const lpData=React.useMemo(()=>{try{return JSON.parse(localStorage.getItem("labourPlanner_v1"))||{};}catch{return {};}});
   const ghNameMap=React.useMemo(()=>{
-    try{
-      const lp=JSON.parse(localStorage.getItem("labourPlanner_v1"))||{};
-      const m={};
-      (lp.greenhouses||[]).forEach(gh=>{m[gh.id]=gh.name;});
-      return m;
-    }catch{return {};}
-  });
+    const m={};(lpData.greenhouses||[]).forEach(gh=>{m[gh.id]=gh.name;});return m;
+  },[lpData]);
   const ghGroups=React.useMemo(()=>{
     const seen={};
     ydpPlans.forEach(p=>{
@@ -1531,45 +1541,112 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
     return getCell(plan.grid?.activities?.[act]?.[wi]);
   };
 
+  // Standards helpers
+  const getDefaultTimesPerWeek=(plan,act)=>{
+    if(act==="Picking"){
+      const cycles=lpData.cropCycles||[];const picks=lpData.pickingData||[];
+      const cyc=cycles.find(c=>c.name===plan?.cropName);
+      if(cyc){const pd=picks.find(d=>d.cropId===cyc.id);if(pd?.roundsPerWeek)return Math.max(1,parseInt(pd.roundsPerWeek)||1);}
+    }
+    return 1;
+  };
+  const getOrInitStd=(plan,act)=>{
+    const saved=carStandards[plan?.id]?.[act];
+    if(saved)return saved;
+    const n=getDefaultTimesPerWeek(plan,act);
+    return{timesPerWeek:n,mode:n>1?"alt":"once",days:defaultDaysFor(n)};
+  };
+  const updateStd=(planId,act,updates)=>{
+    setCarStandards(prev=>{
+      const ps=prev[planId]||{};const cur=ps[act]||{timesPerWeek:1,mode:"once",days:["Tuesday"]};
+      let ns={...cur,...updates};
+      if(updates.timesPerWeek!==undefined&&parseInt(updates.timesPerWeek)!==cur.timesPerWeek){
+        const n=parseInt(updates.timesPerWeek)||1;ns.mode=n>1?"alt":"once";ns.days=defaultDaysFor(n);
+      }
+      return{...prev,[planId]:{...ps,[act]:ns}};
+    });
+  };
+  const toggleStdDay=(planId,act,fullDay,std)=>{
+    const days=std.days||[];
+    const nd=days.includes(fullDay)?days.filter(d=>d!==fullDay):[...days,fullDay];
+    if(!nd.length)return;
+    updateStd(planId,act,{days:nd});
+  };
+
+  // Allocate a specific plan+week from standards (returns {key, result})
+  const allocPlanWeek=(plan,wi)=>{
+    const key=`${plan.id}__w${wi}`;
+    const weekStart=addD(plan.startDate,wi*7);
+    const holDates=new Set(wsHolidays.filter(h=>h.scope==="all"||h.ghName===plan.ghId).map(h=>h.date));
+    const rows=[...Object.keys(plan.grid?.activities||{}).filter(a=>!SPECIAL.includes(a)),...SPECIAL];
+    const result={};
+    rows.forEach(act=>{
+      const total=weeklyTarget(act,wi,plan);
+      if(!total||total===0)return;
+      const std=carStandards[plan.id]?.[act]||getOrInitStd(plan,act);
+      let workDays;
+      if(std.days&&std.days.length>0){
+        if(std.mode==="alt"){
+          workDays=std.days.filter(fd=>{const di=FULL_DAYS.indexOf(fd);return di<0||!holDates.has(addD(weekStart,di));}).map(fd=>DAY_SHORT[fd]||fd);
+        }else{
+          const fd=std.days[0];const di=FULL_DAYS.indexOf(fd);
+          if(di>=0&&!holDates.has(addD(weekStart,di))){workDays=[DAY_SHORT[fd]||fd];}
+          else{workDays=DAYS.filter((_,i)=>!holDates.has(addD(weekStart,i)));}
+        }
+      }else{workDays=DAYS.filter((_,i)=>!holDates.has(addD(weekStart,i)));}
+      if(!workDays.length)return;
+      let rem=total;const alloc={};
+      workDays.forEach((d,pos)=>{
+        if(pos===workDays.length-1){alloc[d]=Math.round(rem*10)/10;}
+        else{const share=Math.round(total/workDays.length*10)/10;alloc[d]=share;rem=Math.round((rem-share)*10)/10;}
+      });
+      result[act]=alloc;
+    });
+    return{key,result};
+  };
+
+  // Recalculate all unconfirmed weeks of a plan
+  const recalcPlanWeeks=(planId)=>{
+    const plan=ydpPlans.find(p=>p.id===planId);
+    if(!plan)return;
+    setDailyAllocation(prev=>{
+      const next={...prev};
+      for(let wi=0;wi<plan.cycleWeeks;wi++){
+        if(confirmedWeeks[`${planId}__w${wi}`])continue;
+        const{key,result}=allocPlanWeek(plan,wi);
+        if(Object.keys(result).length>0)next[key]=result;
+      }
+      return next;
+    });
+  };
+
+  // Auto-allocate current week when it has no data yet
+  React.useEffect(()=>{
+    if(!selPlan||!allocKey||isConfirmed)return;
+    const existing=dailyAllocation[allocKey];
+    if(existing&&Object.keys(existing).length>0)return;
+    const{key,result}=allocPlanWeek(selPlan,selWeekIdx);
+    if(Object.keys(result).length>0)setDailyAllocation(prev=>({...prev,[key]:result}));
+  },[allocKey]);
+
   // Daily allocation accessors
   const getAllocVal=(act,day)=>{const v=weekAlloc[act]?.[day];return v!=null?v:"";};
   const setAllocVal=(act,day,val)=>{
     if(!allocKey)return;
     setDailyAllocation(prev=>{
-      const cur=prev[allocKey]||{};
-      const curAct=cur[act]||{};
-      const newAct={...curAct};
+      const cur=prev[allocKey]||{};const curAct=cur[act]||{};const newAct={...curAct};
       const num=val===""?undefined:parseFloat(val);
       if(num==null||isNaN(num))delete newAct[day];else newAct[day]=num;
       return{...prev,[allocKey]:{...cur,[act]:newAct}};
     });
   };
 
-  // Auto-allocate: proportional by day weight, skipping holidays
-  const autoAllocate=()=>{
-    if(!selPlan||!allocKey)return;
-    const weekStart=addD(selPlan.startDate,selWeekIdx*7);
-    const holDates=new Set(wsHolidays.filter(h=>h.scope==="all"||h.ghName===selGHId).map(h=>h.date));
-    const working=DAYS.map((d,i)=>{const date=addD(weekStart,i);return holDates.has(date)?null:{d,i,date};}).filter(Boolean);
-    if(!working.length){alert("All days this week are holidays!");return;}
-    const result={};
-    allRows.forEach(act=>{
-      const total=weeklyTarget(act,selWeekIdx,selPlan);
-      if(!total||total===0)return;
-      const totalW=working.reduce((s,{d})=>s+(WEIGHTS[d]||1),0);
-      let rem=total;
-      const alloc={};
-      working.forEach(({d},pos)=>{
-        if(pos===working.length-1){alloc[d]=Math.round(rem*10)/10;}
-        else{const share=Math.round(total*(WEIGHTS[d]||1)/totalW*10)/10;alloc[d]=share;rem=Math.round((rem-share)*10)/10;}
-      });
-      result[act]=alloc;
-    });
-    setDailyAllocation(prev=>({...prev,[allocKey]:result}));
-  };
-
   // Confirm / unconfirm
-  const confirmWeek=()=>{if(allocKey)setConfirmedWeeks(prev=>({...prev,[allocKey]:true}));};
+  const confirmWeek=()=>{
+    if(!allocKey)return;
+    setConfirmedWeeks(prev=>({...prev,[allocKey]:true}));
+    if(setDemandVersion)setDemandVersion(v=>v+1);
+  };
   const unconfirmWeek=()=>{if(allocKey)setConfirmedWeeks(prev=>{const n={...prev};delete n[allocKey];return n;});};
 
   // Totals
@@ -1596,12 +1673,113 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
       {/* Sub-tabs */}
       <div style={{display:"flex",alignItems:"center",gap:0,marginBottom:"18px",borderBottom:`2px solid ${C.border}`}}>
         <h2 style={{color:C.navy,margin:"0 24px 0 0",fontSize:"18px"}}>📋 Demand</h2>
-        {[{id:"weekly",label:"Weekly Planner"},{id:"holidays",label:"Holidays"}].map(t=>(
+        {[{id:"weekly",label:"Weekly Planner"},{id:"standards",label:"Crop Activity Standards"},{id:"holidays",label:"Holidays"}].map(t=>(
           <button key={t.id} onClick={()=>setDemandSubTab(t.id)} style={{background:"none",border:"none",borderBottom:demandSubTab===t.id?`3px solid ${C.teal}`:"3px solid transparent",padding:"10px 18px",cursor:"pointer",fontSize:"13px",fontWeight:demandSubTab===t.id?"700":"400",color:demandSubTab===t.id?C.teal:C.textMid,marginBottom:"-2px"}}>
             {t.label}
           </button>
         ))}
       </div>
+
+      {/* ══ CROP ACTIVITY STANDARDS ══ */}
+      {demandSubTab==="standards"&&(
+        <div>
+          <div style={{marginBottom:"12px",padding:"10px 14px",background:"#e0f2fe",border:"1px solid #bae6fd",borderRadius:"8px",fontSize:"12px",color:"#0369a1"}}>
+            Define which days each activity runs. Unconfirmed weeks auto-recalculate when you click Apply. Confirmed weeks are never overwritten.
+          </div>
+          <div style={{display:"flex",gap:0,height:"calc(100vh - 260px)",borderRadius:"10px",overflow:"hidden",border:`1px solid ${C.border}`,boxShadow:"0 2px 12px rgba(0,0,0,0.08)"}}>
+            {/* GH sidebar */}
+            <div style={{width:"200px",minWidth:"200px",background:C.navy,display:"flex",flexDirection:"column"}}>
+              <div style={{padding:"12px 14px",borderBottom:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.45)",fontSize:"10px",fontWeight:"700",letterSpacing:"2px",textTransform:"uppercase"}}>Greenhouses</div>
+              <div style={{flex:1,overflowY:"auto"}}>
+                {ghGroups.length===0&&<div style={{padding:"16px",color:"rgba(255,255,255,0.35)",fontSize:"12px",fontStyle:"italic"}}>No plans found</div>}
+                {ghGroups.map(g=>(
+                  <button key={g.ghId} onClick={()=>setSelGHId(g.ghId)} style={{display:"block",width:"100%",textAlign:"left",padding:"10px 14px",background:selGHId===g.ghId?"rgba(255,255,255,0.13)":"transparent",border:"none",borderLeft:selGHId===g.ghId?"3px solid #52B788":"3px solid transparent",color:selGHId===g.ghId?"white":"rgba(255,255,255,0.65)",cursor:"pointer",fontSize:"12px",fontWeight:selGHId===g.ghId?"600":"400"}}>
+                    {g.name}
+                    <div style={{fontSize:"10px",color:"rgba(255,255,255,0.35)",marginTop:"2px"}}>{g.plans.length} plan{g.plans.length!==1?"s":""}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+            {/* Standards grid */}
+            {!selGH?(
+              <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:C.textLight,fontStyle:"italic",fontSize:"14px",background:"#f8faf8"}}>Select a greenhouse</div>
+            ):(
+              <div style={{flex:1,background:"#f8faf8",overflowY:"auto"}}>
+                {selGH.plans.length>1&&(
+                  <div style={{background:"white",borderBottom:`1px solid ${C.border}`,padding:"8px 14px",display:"flex",gap:"8px",alignItems:"center"}}>
+                    <span style={{fontSize:"12px",color:C.textMid,fontWeight:"600"}}>Crop:</span>
+                    {selGH.plans.map(p=>(
+                      <button key={p.id} onClick={()=>setSelPlanId(p.id)} style={{padding:"4px 12px",background:selPlanId===p.id?C.teal:"white",color:selPlanId===p.id?"white":C.textMid,border:`1px solid ${selPlanId===p.id?C.teal:C.border}`,borderRadius:"6px",cursor:"pointer",fontSize:"12px",fontWeight:"600"}}>
+                        {p.cropName}{p.zone&&p.zone!=="full"?` (Zone ${p.zone})`:""}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {selPlan?(
+                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:"13px"}}>
+                    <thead>
+                      <tr style={{background:"#f0f4f8",position:"sticky",top:0,zIndex:2}}>
+                        <th style={{padding:"10px 16px",textAlign:"left",fontWeight:"700",color:C.navy,borderBottom:`2px solid ${C.border}`,width:"180px"}}>Activity</th>
+                        <th style={{padding:"10px 16px",textAlign:"center",fontWeight:"700",color:C.navy,borderBottom:`2px solid ${C.border}`,width:"110px"}}>Times/week</th>
+                        <th style={{padding:"10px 16px",textAlign:"left",fontWeight:"700",color:C.navy,borderBottom:`2px solid ${C.border}`}}>Day schedule</th>
+                        <th style={{padding:"10px 16px",textAlign:"center",fontWeight:"700",color:C.navy,borderBottom:`2px solid ${C.border}`,width:"90px"}}>Apply</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[...Object.keys(selPlan.grid?.activities||{}).filter(a=>!SPECIAL.includes(a)),...SPECIAL.filter(s=>weeklyTarget(s,0,selPlan)>0||true)].map((act,ai)=>{
+                        const std=getOrInitStd(selPlan,act);
+                        const saved=carStandards[selPlan.id]?.[act]||std;
+                        const isAlt=saved.mode==="alt";
+                        return(
+                          <tr key={act} style={{background:ai%2===0?"white":"#f8faf8",borderBottom:`1px solid ${C.border}`}}>
+                            <td style={{padding:"10px 16px",fontWeight:"600",color:SPECIAL.includes(act)?"#d4880e":C.textDark}}>{act}</td>
+                            <td style={{padding:"10px 16px",textAlign:"center"}}>
+                              <input type="number" min="1" max="7" value={saved.timesPerWeek||1}
+                                onChange={e=>updateStd(selPlan.id,act,{timesPerWeek:parseInt(e.target.value)||1})}
+                                style={{width:"56px",padding:"5px 8px",border:`1px solid ${C.border}`,borderRadius:"6px",textAlign:"center",fontSize:"13px",fontWeight:"700"}}/>
+                            </td>
+                            <td style={{padding:"10px 16px"}}>
+                              <div style={{display:"flex",alignItems:"center",gap:"10px",flexWrap:"wrap"}}>
+                                <div style={{display:"flex",borderRadius:"6px",overflow:"hidden",border:`1px solid ${C.border}`}}>
+                                  <button onClick={()=>updateStd(selPlan.id,act,{mode:"once"})} style={{padding:"5px 14px",background:!isAlt?C.teal:"white",color:!isAlt?"white":C.textMid,border:"none",cursor:"pointer",fontSize:"12px",fontWeight:"600"}}>Once weekly</button>
+                                  <button onClick={()=>updateStd(selPlan.id,act,{mode:"alt"})} style={{padding:"5px 14px",background:isAlt?C.teal:"white",color:isAlt?"white":C.textMid,border:"none",cursor:"pointer",fontSize:"12px",fontWeight:"600"}}>Specific days</button>
+                                </div>
+                                {isAlt?(
+                                  <div style={{display:"flex",gap:"4px"}}>
+                                    {FULL_DAYS.map((fd,di)=>{
+                                      const sel=saved.days?.includes(fd);
+                                      const isWE=di>=5;
+                                      return(
+                                        <button key={fd} onClick={()=>toggleStdDay(selPlan.id,act,fd,saved)}
+                                          style={{width:"36px",height:"34px",borderRadius:"6px",background:sel?(isWE?"#f59e0b":C.teal):"white",color:sel?"white":(isWE?"#b45309":C.textMid),border:`1px solid ${sel?(isWE?"#f59e0b":C.teal):C.border}`,cursor:"pointer",fontSize:"11px",fontWeight:"700"}}>
+                                          {DAYS[di]}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                ):(
+                                  <span style={{fontSize:"12px",color:C.textMid,fontStyle:"italic"}}>
+                                    {saved.days?.length>0?("→ "+saved.days.join(", ")):"→ No day set"}
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td style={{padding:"10px 16px",textAlign:"center"}}>
+                              <button onClick={()=>recalcPlanWeeks(selPlan.id)} style={{...btn(true,C.teal),padding:"5px 12px",fontSize:"11px"}}>↻ Apply</button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                ):(
+                  <div style={{padding:"30px",color:C.textLight,fontStyle:"italic",textAlign:"center"}}>Select a crop plan above</div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ══ WEEKLY PLANNER ══ */}
       {demandSubTab==="weekly"&&(
@@ -1685,7 +1863,6 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
                     <span style={{fontSize:"12px",color:weekTargetTotal>0?(Math.abs(grandTotal-weekTargetTotal)<0.2?C.green:grandTotal>weekTargetTotal?"#dc2626":"#d97706"):C.textLight}}>
                       Allocated: <strong>{grandTotal.toFixed(1)}</strong> / Target: <strong>{weekTargetTotal.toFixed(1)}</strong> hrs
                     </span>
-                    <button onClick={autoAllocate} style={{...btn(false,C.teal),padding:"6px 14px",fontSize:"12px"}}>⚡ Auto-allocate</button>
                     {isConfirmed
                       ?<><button onClick={unconfirmWeek} style={{...btn(false,"#6b7280"),padding:"6px 14px",fontSize:"12px"}}>↩ Unconfirm</button>
                         <span style={{background:"#dcfce7",color:"#166534",padding:"4px 10px",borderRadius:"12px",fontSize:"11px",fontWeight:"700"}}>✓ Confirmed</span></>
