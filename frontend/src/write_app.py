@@ -1750,8 +1750,15 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
   const selGH=ghGroups.find(g=>g.ghId===selGHId)||null;
   const selPlan=selGH?.plans.find(p=>p.id===selPlanId)||selGH?.plans[0]||null;
   const allocKey=selPlan?`${selPlan.id}__w${selWeekIdx}`:null;
-  const weekAlloc=allocKey?dailyAllocation[allocKey]||{}:{};
   const isConfirmed=allocKey?!!confirmedWeeks[allocKey]:false;
+  // For confirmed weeks: use stored allocation (preserves manual adjustments)
+  // For unconfirmed weeks: always compute fresh from plan.grid + standards — never show stale stored data
+  const weekAlloc=React.useMemo(()=>{
+    if(!allocKey||!selPlan)return{};
+    if(isConfirmed)return dailyAllocation[allocKey]||{};
+    const{result}=allocPlanWeek(selPlan,selWeekIdx);
+    return result;
+  },[allocKey,isConfirmed,dailyAllocation,demandVersion]);// eslint-disable-line react-hooks/exhaustive-deps
 
   // All rows for the selected plan (weekly planner)
   const actRows=selPlan?Object.keys(selPlan.grid?.activities||{}).filter(a=>!SPECIAL.includes(a)):[];
@@ -1954,7 +1961,10 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
 
   // Confirm / unconfirm
   const confirmWeek=()=>{
-    if(!allocKey)return;
+    if(!allocKey||!selPlan)return;
+    // Snapshot the current computed allocation so it persists after confirming
+    const{key,result}=allocPlanWeek(selPlan,selWeekIdx);
+    setDailyAllocation(prev=>({...prev,[key]:result}));
     setConfirmedWeeks(prev=>({...prev,[allocKey]:true}));
     if(setDemandVersion)setDemandVersion(v=>v+1);
     if(addAuditEntry)addAuditEntry("confirm",`Week ${selWeekIdx+1} confirmed — ${selGH?.name||""} ${selPlan?.cropName||""}`,{gh:selGH?.name,week:selWeekIdx+1,crop:selPlan?.cropName});
