@@ -1619,9 +1619,11 @@ function SchedulePage({scheduleData,setScheduleData,dailyAllocation,confirmedWee
 // ═══════════════════════════════════════════════════════════════════════════════
 function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation,confirmedWeeks,setConfirmedWeeks,carStandards,setCarStandards,setDemandVersion,addAuditEntry,role,btn,inp,card,C}){
   const [demandSubTab,setDemandSubTab]=React.useState("weekly");
-  const [selGHId,setSelGHId]=React.useState(null);
-  const [selPlanId,setSelPlanId]=React.useState(null);
+  const [selGHId,setSelGHId]=React.useState(null);       // weekly planner
+  const [selPlanId,setSelPlanId]=React.useState(null);    // weekly planner
   const [selWeekIdx,setSelWeekIdx]=React.useState(0);
+  const [selStdCropName,setSelStdCropName]=React.useState(null); // standards tab — crop type
+  const [stdsDirty,setStdsDirty]=React.useState(false);  // true after editing a standard
   const [holidayForm,setHolidayForm]=React.useState({date:"",scope:"all",ghName:"",label:""});
 
   const FULL_DAYS=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
@@ -1655,12 +1657,29 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
     return Object.values(seen);
   },[ydpPlans.length]);
 
-  // Auto-select first GH on load
+  // Standards tab — unique crop type list (from YDP plans)
+  const stdCropList=React.useMemo(()=>[...new Set(ydpPlans.map(p=>p.cropName))].filter(Boolean).sort(),[ydpPlans.length]);
+
+  // Auto-select first crop type for standards tab
+  React.useEffect(()=>{
+    if(!selStdCropName&&stdCropList.length>0)setSelStdCropName(stdCropList[0]);
+  },[stdCropList.length]);
+
+  // Auto-apply standards when switching to a crop type that has never been applied
+  React.useEffect(()=>{
+    if(!selStdCropName)return;
+    const plans=ydpPlans.filter(p=>p.cropName===selStdCropName);
+    const hasAnyAlloc=plans.some(plan=>Array.from({length:plan.cycleWeeks||0},(_,wi)=>`${plan.id}__w${wi}`).some(k=>dailyAllocation[k]&&Object.keys(dailyAllocation[k]).length>0));
+    if(!hasAnyAlloc&&plans.length>0){recalcPlanWeeks(selStdCropName);}
+    setStdsDirty(false);
+  },[selStdCropName]);
+
+  // Auto-select first GH on load (weekly planner)
   React.useEffect(()=>{
     if(!selGHId&&ghGroups.length>0)setSelGHId(ghGroups[0].ghId);
   },[ghGroups.length]);
 
-  // Auto-select first plan when GH changes
+  // Auto-select first plan when GH changes (weekly planner)
   React.useEffect(()=>{
     const gh=ghGroups.find(g=>g.ghId===selGHId);
     if(gh&&gh.plans.length>0&&!gh.plans.find(p=>p.id===selPlanId)){
@@ -1674,9 +1693,26 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
   const weekAlloc=allocKey?dailyAllocation[allocKey]||{}:{};
   const isConfirmed=allocKey?!!confirmedWeeks[allocKey]:false;
 
-  // All rows for the selected plan
+  // All rows for the selected plan (weekly planner)
   const actRows=selPlan?Object.keys(selPlan.grid?.activities||{}).filter(a=>!SPECIAL.includes(a)):[];
   const allRows=[...actRows,...SPECIAL];
+
+  // Standards tab — representative plan + activity list for selected crop type
+  const stdRepPlan=React.useMemo(()=>ydpPlans.find(p=>p.cropName===selStdCropName)||null,[selStdCropName,ydpPlans.length]);
+  const stdActList=React.useMemo(()=>{
+    // Activities from LP crop master for this crop type
+    const cycles=lpData.cropCycles||[];
+    const cyc=cycles.find(c=>c.name===selStdCropName);
+    const cmd=(lpData.cropMasterData||[]).find(d=>d.cropId===cyc?.id);
+    // Union: activities ticked in crop cycle master + any in YDP plan grids
+    const fromLP=cyc?Object.keys(cyc.matrix||{}).map(k=>k.split("|||")[0]).filter(a=>!SPECIAL.includes(a)):[];
+    const fromYDP=ydpPlans.filter(p=>p.cropName===selStdCropName).flatMap(p=>Object.keys(p.grid?.activities||{}).filter(a=>!SPECIAL.includes(a)));
+    const regular=[...new Set([...fromLP,...fromYDP])].sort();
+    // Include SPECIAL if data exists
+    const hasPickData=!!(lpData.pickingData||[]).find(d=>d.cropId===cyc?.id&&d.roundsPerWeek);
+    // Pollination applies per GH, always include
+    return[...regular,...(regular.length>0||hasPickData?SPECIAL:[])];
+  },[selStdCropName,lpData,ydpPlans.length]);
 
   // Weekly target for a row from YDP
   const weeklyTarget=(act,wi,plan)=>{
@@ -1716,6 +1752,7 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
     return{timesPerWeek:n,mode:n>1?"alt":"once",days:defaultDaysFor(n)};
   };
   const updateStd=(cropName,act,updates)=>{
+    setStdsDirty(true);
     setCarStandards(prev=>{
       const ps=prev[cropName]||{};const cur=ps[act]||{timesPerWeek:1,mode:"once",days:["Tuesday"]};
       let ns={...cur,...updates};
@@ -1856,66 +1893,85 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
       {/* ══ CROP ACTIVITY STANDARDS ══ */}
       {demandSubTab==="standards"&&(
         <div>
-          <div style={{marginBottom:"12px",padding:"10px 14px",background:"#fef3c7",border:"1px solid #fcd34d",borderRadius:"8px",fontSize:"12px",color:"#92400e"}}>
-            ⚠️ <strong>Standards are per crop type</strong> — a change here applies to <em>all greenhouses</em> growing that crop. Unconfirmed weeks only; confirmed weeks are locked and must be edited manually.
+          {/* Info + Apply bar */}
+          <div style={{marginBottom:"12px",display:"flex",alignItems:"center",gap:"12px",flexWrap:"wrap"}}>
+            <div style={{flex:1,padding:"10px 14px",background:"#fef3c7",border:"1px solid #fcd34d",borderRadius:"8px",fontSize:"12px",color:"#92400e"}}>
+              ⚠️ <strong>Standards are per crop type</strong> — applies to every GH growing that crop. Auto-applied on first load. After editing, click Apply to push changes to unconfirmed weeks.
+            </div>
+            {stdsDirty&&selStdCropName&&(
+              <button onClick={()=>{recalcPlanWeeks(selStdCropName);setStdsDirty(false);}} style={{...btn(true,C.teal),padding:"10px 20px",fontSize:"13px",fontWeight:"700",boxShadow:`0 0 0 3px ${C.teal}44`}}>
+                ↻ Apply to Unconfirmed Weeks
+              </button>
+            )}
+            {!stdsDirty&&selStdCropName&&(
+              <button onClick={()=>recalcPlanWeeks(selStdCropName)} style={{...btn(false,C.teal),padding:"10px 20px",fontSize:"13px"}}>
+                ↻ Re-apply to Unconfirmed Weeks
+              </button>
+            )}
           </div>
-          <div style={{display:"flex",gap:0,height:"calc(100vh - 260px)",borderRadius:"10px",overflow:"hidden",border:`1px solid ${C.border}`,boxShadow:"0 2px 12px rgba(0,0,0,0.08)"}}>
-            {/* GH sidebar */}
-            <div style={{width:"200px",minWidth:"200px",background:C.navy,display:"flex",flexDirection:"column"}}>
-              <div style={{padding:"12px 14px",borderBottom:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.45)",fontSize:"10px",fontWeight:"700",letterSpacing:"2px",textTransform:"uppercase"}}>Greenhouses</div>
+          <div style={{display:"flex",gap:0,height:"calc(100vh - 290px)",borderRadius:"10px",overflow:"hidden",border:`1px solid ${C.border}`,boxShadow:"0 2px 12px rgba(0,0,0,0.08)"}}>
+            {/* Crop Type sidebar */}
+            <div style={{width:"220px",minWidth:"220px",background:C.navy,display:"flex",flexDirection:"column"}}>
+              <div style={{padding:"12px 14px",borderBottom:"1px solid rgba(255,255,255,0.1)"}}>
+                <div style={{color:"rgba(255,255,255,0.45)",fontSize:"10px",fontWeight:"700",letterSpacing:"2px",textTransform:"uppercase"}}>Crop Types</div>
+                <div style={{color:"#52B788",fontSize:"11px",marginTop:"2px"}}>from LP Crop Master</div>
+              </div>
               <div style={{flex:1,overflowY:"auto"}}>
-                {ghGroups.length===0&&<div style={{padding:"16px",color:"rgba(255,255,255,0.35)",fontSize:"12px",fontStyle:"italic"}}>No plans found</div>}
-                {ghGroups.map(g=>(
-                  <button key={g.ghId} onClick={()=>setSelGHId(g.ghId)} style={{display:"block",width:"100%",textAlign:"left",padding:"10px 14px",background:selGHId===g.ghId?"rgba(255,255,255,0.13)":"transparent",border:"none",borderLeft:selGHId===g.ghId?"3px solid #52B788":"3px solid transparent",color:selGHId===g.ghId?"white":"rgba(255,255,255,0.65)",cursor:"pointer",fontSize:"12px",fontWeight:selGHId===g.ghId?"600":"400"}}>
-                    {g.name}
-                    <div style={{fontSize:"10px",color:"rgba(255,255,255,0.35)",marginTop:"2px"}}>{g.plans.length} plan{g.plans.length!==1?"s":""}</div>
-                  </button>
-                ))}
+                {stdCropList.length===0&&<div style={{padding:"16px",color:"rgba(255,255,255,0.35)",fontSize:"12px",fontStyle:"italic"}}>No crop plans found</div>}
+                {stdCropList.map(cropName=>{
+                  const isCustom=!!(carStandards[cropName]&&Object.keys(carStandards[cropName]).length>0);
+                  return(
+                    <button key={cropName} onClick={()=>setSelStdCropName(cropName)} style={{display:"block",width:"100%",textAlign:"left",padding:"10px 14px",background:selStdCropName===cropName?"rgba(255,255,255,0.13)":"transparent",border:"none",borderLeft:selStdCropName===cropName?"3px solid #52B788":"3px solid transparent",color:selStdCropName===cropName?"white":"rgba(255,255,255,0.65)",cursor:"pointer",fontSize:"12px",fontWeight:selStdCropName===cropName?"600":"400"}}>
+                      {cropName}
+                      {isCustom&&<span style={{marginLeft:"6px",background:"#f59e0b",color:"white",borderRadius:"4px",padding:"1px 5px",fontSize:"9px",fontWeight:"700"}}>CUSTOM</span>}
+                      <div style={{fontSize:"10px",color:"rgba(255,255,255,0.35)",marginTop:"2px"}}>{ydpPlans.filter(p=>p.cropName===cropName).length} GH plan{ydpPlans.filter(p=>p.cropName===cropName).length!==1?"s":""}</div>
+                    </button>
+                  );
+                })}
               </div>
             </div>
             {/* Standards grid */}
-            {!selGH?(
-              <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:C.textLight,fontStyle:"italic",fontSize:"14px",background:"#f8faf8"}}>Select a greenhouse</div>
+            {!selStdCropName?(
+              <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:C.textLight,fontStyle:"italic",fontSize:"14px",background:"#f8faf8"}}>Select a crop type</div>
             ):(
               <div style={{flex:1,background:"#f8faf8",overflowY:"auto"}}>
-                {selGH.plans.length>1&&(
-                  <div style={{background:"white",borderBottom:`1px solid ${C.border}`,padding:"8px 14px",display:"flex",gap:"8px",alignItems:"center"}}>
-                    <span style={{fontSize:"12px",color:C.textMid,fontWeight:"600"}}>Crop:</span>
-                    {selGH.plans.map(p=>(
-                      <button key={p.id} onClick={()=>setSelPlanId(p.id)} style={{padding:"4px 12px",background:selPlanId===p.id?C.teal:"white",color:selPlanId===p.id?"white":C.textMid,border:`1px solid ${selPlanId===p.id?C.teal:C.border}`,borderRadius:"6px",cursor:"pointer",fontSize:"12px",fontWeight:"600"}}>
-                        {p.cropName}{p.zone&&p.zone!=="full"?` (Zone ${p.zone})`:""}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {selPlan?(
+                <div style={{background:"white",borderBottom:`1px solid ${C.border}`,padding:"10px 16px",display:"flex",alignItems:"center",gap:"10px"}}>
+                  <span style={{fontWeight:"700",color:C.navy,fontSize:"15px"}}>{selStdCropName}</span>
+                  <span style={{fontSize:"12px",color:C.textMid}}>· {ydpPlans.filter(p=>p.cropName===selStdCropName).length} GH plan(s) will be updated</span>
+                  {stdsDirty&&<span style={{marginLeft:"auto",background:"#fef3c7",color:"#92400e",border:"1px solid #fcd34d",borderRadius:"6px",padding:"3px 10px",fontSize:"11px",fontWeight:"700"}}>Unsaved changes</span>}
+                </div>
+                {stdActList.length===0?(
+                  <div style={{padding:"30px",color:C.textLight,fontStyle:"italic",textAlign:"center"}}>No activities found for this crop in LP Crop Master</div>
+                ):(
                   <table style={{width:"100%",borderCollapse:"collapse",fontSize:"13px"}}>
                     <thead>
                       <tr style={{background:"#f0f4f8",position:"sticky",top:0,zIndex:2}}>
                         <th style={{padding:"10px 16px",textAlign:"left",fontWeight:"700",color:C.navy,borderBottom:`2px solid ${C.border}`,width:"180px"}}>Activity</th>
                         <th style={{padding:"10px 16px",textAlign:"center",fontWeight:"700",color:C.navy,borderBottom:`2px solid ${C.border}`,width:"110px"}}>Times/week</th>
                         <th style={{padding:"10px 16px",textAlign:"left",fontWeight:"700",color:C.navy,borderBottom:`2px solid ${C.border}`}}>Day schedule</th>
-                        <th style={{padding:"10px 16px",textAlign:"center",fontWeight:"700",color:C.navy,borderBottom:`2px solid ${C.border}`,width:"90px"}}>Apply</th>
+                        <th style={{padding:"10px 16px",textAlign:"center",fontWeight:"700",color:C.navy,borderBottom:`2px solid ${C.border}`,width:"100px"}}>Source</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {[...Object.keys(selPlan.grid?.activities||{}).filter(a=>!SPECIAL.includes(a)),...SPECIAL.filter(s=>weeklyTarget(s,0,selPlan)>0||true)].map((act,ai)=>{
-                        const std=getOrInitStd(selPlan,act);
-                        const saved=carStandards[selPlan.cropName]?.[act]||std;
+                      {stdActList.map((act,ai)=>{
+                        const std=getOrInitStd(stdRepPlan,act);
+                        const isCustomSaved=!!(carStandards[selStdCropName]?.[act]);
+                        const saved=isCustomSaved?carStandards[selStdCropName][act]:std;
                         const isAlt=saved.mode==="alt";
+                        const defN=getDefaultTimesPerWeek(stdRepPlan,act);
                         return(
                           <tr key={act} style={{background:ai%2===0?"white":"#f8faf8",borderBottom:`1px solid ${C.border}`}}>
                             <td style={{padding:"10px 16px",fontWeight:"600",color:SPECIAL.includes(act)?"#d4880e":C.textDark}}>{act}</td>
                             <td style={{padding:"10px 16px",textAlign:"center"}}>
                               <input type="number" min="1" max="7" value={saved.timesPerWeek||1}
-                                onChange={e=>updateStd(selPlan.cropName,act,{timesPerWeek:parseInt(e.target.value)||1})}
+                                onChange={e=>updateStd(selStdCropName,act,{timesPerWeek:parseInt(e.target.value)||1})}
                                 style={{width:"56px",padding:"5px 8px",border:`1px solid ${C.border}`,borderRadius:"6px",textAlign:"center",fontSize:"13px",fontWeight:"700"}}/>
                             </td>
                             <td style={{padding:"10px 16px"}}>
                               <div style={{display:"flex",alignItems:"center",gap:"10px",flexWrap:"wrap"}}>
                                 <div style={{display:"flex",borderRadius:"6px",overflow:"hidden",border:`1px solid ${C.border}`}}>
-                                  <button onClick={()=>updateStd(selPlan.cropName,act,{mode:"once"})} style={{padding:"5px 14px",background:!isAlt?C.teal:"white",color:!isAlt?"white":C.textMid,border:"none",cursor:"pointer",fontSize:"12px",fontWeight:"600"}}>Once weekly</button>
-                                  <button onClick={()=>updateStd(selPlan.cropName,act,{mode:"alt"})} style={{padding:"5px 14px",background:isAlt?C.teal:"white",color:isAlt?"white":C.textMid,border:"none",cursor:"pointer",fontSize:"12px",fontWeight:"600"}}>Specific days</button>
+                                  <button onClick={()=>updateStd(selStdCropName,act,{mode:"once"})} style={{padding:"5px 14px",background:!isAlt?C.teal:"white",color:!isAlt?"white":C.textMid,border:"none",cursor:"pointer",fontSize:"12px",fontWeight:"600"}}>Once weekly</button>
+                                  <button onClick={()=>updateStd(selStdCropName,act,{mode:"alt"})} style={{padding:"5px 14px",background:isAlt?C.teal:"white",color:isAlt?"white":C.textMid,border:"none",cursor:"pointer",fontSize:"12px",fontWeight:"600"}}>Specific days</button>
                                 </div>
                                 {isAlt?(
                                   <div style={{display:"flex",gap:"4px"}}>
@@ -1923,7 +1979,7 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
                                       const sel=saved.days?.includes(fd);
                                       const isWE=di>=5;
                                       return(
-                                        <button key={fd} onClick={()=>toggleStdDay(selPlan.cropName,act,fd,saved)}
+                                        <button key={fd} onClick={()=>toggleStdDay(selStdCropName,act,fd,saved)}
                                           style={{width:"36px",height:"34px",borderRadius:"6px",background:sel?(isWE?"#f59e0b":C.teal):"white",color:sel?"white":(isWE?"#b45309":C.textMid),border:`1px solid ${sel?(isWE?"#f59e0b":C.teal):C.border}`,cursor:"pointer",fontSize:"11px",fontWeight:"700"}}>
                                           {DAYS[di]}
                                         </button>
@@ -1938,15 +1994,16 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
                               </div>
                             </td>
                             <td style={{padding:"10px 16px",textAlign:"center"}}>
-                              <button onClick={()=>recalcPlanWeeks(selPlan.cropName)} style={{...btn(true,C.teal),padding:"5px 12px",fontSize:"11px"}}>↻ Apply All</button>
+                              {isCustomSaved
+                                ?<span style={{background:"#fef3c7",color:"#92400e",border:"1px solid #fcd34d",borderRadius:"6px",padding:"3px 8px",fontSize:"11px",fontWeight:"700"}}>Custom</span>
+                                :<span style={{color:C.textLight,fontSize:"11px"}}>LP default (×{defN})</span>
+                              }
                             </td>
                           </tr>
                         );
                       })}
                     </tbody>
                   </table>
-                ):(
-                  <div style={{padding:"30px",color:C.textLight,fontStyle:"italic",textAlign:"center"}}>Select a crop plan above</div>
                 )}
               </div>
             )}
