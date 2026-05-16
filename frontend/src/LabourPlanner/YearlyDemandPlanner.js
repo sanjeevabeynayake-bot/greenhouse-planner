@@ -419,6 +419,7 @@ function CreatePlanForm({ gh, zone, plans, cropCycles, onCreated, onCancel }) {
 function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinationData, pickingData, setPlans, today }) {
   const masterData = cropMasterData.find(d => d.cropId === plan.cropId);
   const [contextMenu, setContextMenu] = useState(null);
+  const [dirty, setDirty] = useState(false); // true after manual edits; cleared on Recalculate
 
   const sqmFromGH = plan.zone === "A" ? (gh?.zoneA?.sqm || "")
     : plan.zone === "B" ? (gh?.zoneB?.sqm || "")
@@ -450,6 +451,7 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinatio
 
   // ── Handlers ──
   const handleCellEdit = (act, wi, val) => {
+    setDirty(true);
     setPlans(prev => prev.map(p => {
       if (p.id !== plan.id) return p;
       const acts = { ...(p.grid?.activities || {}) };
@@ -523,18 +525,21 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinatio
       pollinationData, pickingData, activities,
     });
     setPlans(prev => prev.map(p => p.id === plan.id ? { ...p, grid: newGrid } : p));
+    setDirty(false);
   };
 
   const doPopulate = () => {
+    if (dirty) { alert("Please click Recalculate first to refresh the grid before populating."); return; }
     const newGrid = buildGrid(plan, {
       cropCycles, cropMasterData,
       greenhouses: gh ? [gh] : [],
       pollinationData, pickingData, activities,
     });
-    setPlans(prev => prev.map(p => p.id === plan.id ? {
-      ...p, grid: newGrid, sentToScheduler: true,
-      auditLog: [...(p.auditLog || []), { action: "populated", at: new Date().toISOString() }],
-    } : p));
+    const updatedPlan = { ...plan, grid: newGrid, sentToScheduler: true, auditLog: [...(plan.auditLog || []), { action: "populated", at: new Date().toISOString() }] };
+    setPlans(prev => prev.map(p => p.id === plan.id ? updatedPlan : p));
+    // Write a populate timestamp so the Demand tab can detect the update
+    localStorage.setItem("ydp_last_populated_v1", JSON.stringify({ planId: plan.id, ts: new Date().toISOString() }));
+    alert(`✅ "${plan.cropName}" populated to Demand scheduler.\n\nGo to Weekly Scheduler → Demand tab. If data doesn't appear, navigate away and back to refresh.`);
   };
 
   // Dynamic totals — respects manual overrides
@@ -616,9 +621,15 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinatio
           style={{ ...lpBtn(false, LP.mid), padding: "8px 16px", minHeight: 44 }}>
           ↻ Recalculate
         </button>
-        <button disabled
-          title="Coming soon — Weekly Scheduler not yet connected"
-          style={{ ...lpBtn(false, LP.mid), padding: "8px 18px", minHeight: 44, opacity: 0.38, cursor: "not-allowed" }}>
+        {dirty && (
+          <div style={{ background: LP.amberLight, border: `1px solid ${LP.amber}`, borderRadius: 8, padding: "6px 12px", fontSize: 11, color: LP.amber, fontWeight: 700 }}>
+            ⚠️ Manual edits pending — Recalculate before populating
+          </div>
+        )}
+        <button onClick={doPopulate}
+          disabled={dirty}
+          title={dirty ? "Recalculate first to refresh the grid" : "Populate this plan to the Weekly Scheduler demand tab"}
+          style={{ ...lpBtn(!dirty, LP.forest), padding: "8px 18px", minHeight: 44, opacity: dirty ? 0.38 : 1, cursor: dirty ? "not-allowed" : "pointer" }}>
           ▶ Populate to Scheduler
         </button>
       </div>

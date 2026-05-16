@@ -746,17 +746,24 @@ export default function App() {
                             {DAY_SHORT[d]}{dateStr&&<div style={{fontSize:"10px",opacity:0.8}}>{dateStr}</div>}
                           </th>;
                         })}
-                        <TH center>Abs</TH>
+                        <TH center>Hrs Absent</TH>
                       </tr>
                       <tr style={{background:"#254a6e"}}>
                         <td colSpan="2"></td>
-                        {ALL_DAYS.map(d=><React.Fragment key={d}><td style={{padding:"2px 5px",textAlign:"center",color:"rgba(255,255,255,0.7)",fontSize:"10px",borderLeft:"1px solid rgba(255,255,255,0.1)"}}>Hrs</td><td style={{padding:"2px 5px",textAlign:"center",color:"rgba(255,255,255,0.7)",fontSize:"10px"}}>Off</td></React.Fragment>)}
+                        {ALL_DAYS.map(d=><React.Fragment key={d}><td style={{padding:"2px 5px",textAlign:"center",color:"rgba(255,255,255,0.7)",fontSize:"10px",borderLeft:"1px solid rgba(255,255,255,0.1)"}}>Hrs Absent</td><td style={{padding:"2px 5px",textAlign:"center",color:"rgba(255,255,255,0.7)",fontSize:"10px"}}>Full Day</td></React.Fragment>)}
                         <td></td>
                       </tr>
                     </thead>
                     <tbody>
                       {staff.map((s,i)=>{
-                        const totalAbs=ALL_DAYS.filter(d=>{const al=absences[d]||[];return al.includes(s.id)||al.some(x=>typeof x==="object"&&x.id===s.id&&x.hours===0);}).length;
+                        const totalAbsHrs=ALL_DAYS.reduce((sum,d)=>{
+                          const al=absences[d]||[];
+                          const normalHrs=s.dayHours?.[d]??(["Saturday","Sunday"].includes(d)?0:s.hoursPerDay??7);
+                          if(al.includes(s.id))return sum+normalHrs;
+                          const partial=al.find(x=>typeof x==="object"&&x.id===s.id);
+                          if(partial)return sum+(partial.hours||normalHrs);
+                          return sum;
+                        },0);
                         return(
                           <tr key={s.id} style={{background:i%2===0?C.light:C.white}}>
                             <TD i={i}><span style={{fontFamily:"monospace",color:C.navy,fontWeight:"700",fontSize:"11px"}}>{s.id}</span></TD>
@@ -779,20 +786,91 @@ export default function App() {
                                 </React.Fragment>
                               );
                             })}
-                            <td style={{padding:"6px",textAlign:"center",fontWeight:"700",color:totalAbs>0?C.red:C.textLight,background:i%2===0?C.light:C.white,fontSize:"12px"}}>{totalAbs||"—"}</td>
+                            <td style={{padding:"6px",textAlign:"center",fontWeight:"700",color:totalAbsHrs>0?C.red:C.textLight,background:i%2===0?C.light:C.white,fontSize:"12px"}}>{totalAbsHrs>0?`${totalAbsHrs}h`:"—"}</td>
                           </tr>
                         );
                       })}
                     </tbody>
                   </table>
                 </div>
-                <div style={{marginTop:"14px",display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>
+                {/* Best practice guide */}
+                <div style={{marginTop:"14px",padding:"12px 16px",background:"#f0fdf4",border:"1px solid #bbf7d0",borderRadius:"8px",fontSize:"12px",color:"#166534"}}>
+                  <strong>Coverage cascade (best practice):</strong> 1️⃣ Same-GH staff first → 2️⃣ Nearest capable staff → 3️⃣ Reschedule to later in week → 4️⃣ OT as last resort. Picking &amp; Harvesting cannot be deferred — flag as lost production if uncovered.
+                </div>
+                {/* Action buttons */}
+                <div style={{marginTop:"10px",display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>
                   {(role==="gm"||role==="lm")&&<button onClick={()=>generateSchedule()} disabled={generating} style={{...btn(false,C.green),opacity:generating?0.7:1}}>{generating?"⏳ Optimising...":"🚀 Full Regenerate"}</button>}
                   {schedule&&staff.filter(s=>ALL_DAYS.some(d=>{const al=absences[d]||[];return al.includes(s.id)||al.some(x=>typeof x==="object"&&x.id===s.id);})).map(s=>{
                     const affectedDays=ALL_DAYS.filter(d=>{const al=absences[d]||[];return al.includes(s.id)||al.some(x=>typeof x==="object"&&x.id===s.id);});
-                    return <button key={s.id} onClick={()=>reoptimise(s.id,affectedDays)} disabled={generating} style={{...btn(false,C.gold),fontSize:"12px",opacity:generating?0.7:1}}>↻ Min-disrupt: {s.name}</button>;
+                    return(<div key={s.id} style={{display:"flex",gap:"4px"}}>
+                      <button onClick={()=>reoptimise(s.id,affectedDays)} disabled={generating} style={{...btn(false,C.gold),fontSize:"12px",opacity:generating?0.7:1}}>↻ Min-disrupt: {s.name}</button>
+                      {affectedDays.map(day=>(
+                        <button key={day} onClick={()=>reoptimise(s.id,[day])} disabled={generating} style={{...btn(false,C.teal),fontSize:"11px",padding:"5px 8px",opacity:generating?0.7:1}}>↻ {day.slice(0,3)} only</button>
+                      ))}
+                    </div>);
                   })}
                 </div>
+                {/* Coverage analysis per day */}
+                {schedule&&ALL_DAYS.some(d=>{const al=absences[d]||[];return al.some(x=>x===staff.find(s=>true)?.id||typeof x==="object");})&&(
+                  <div style={{marginTop:"16px"}}>
+                    <div style={{fontSize:"13px",fontWeight:"700",color:C.navy,marginBottom:"10px"}}>📊 Day-by-Day Coverage Analysis</div>
+                    {ALL_DAYS.map(day=>{
+                      const al=absences[day]||[];
+                      const absentStaff=staff.filter(s=>al.includes(s.id)||al.some(x=>typeof x==="object"&&x.id===s.id));
+                      if(!absentStaff.length)return null;
+                      const dayAssignments=schedule[day]||[];
+                      return(
+                        <div key={day} style={{marginBottom:"12px",border:`1px solid ${C.border}`,borderRadius:"8px",overflow:"hidden"}}>
+                          <div style={{background:C.navy,color:"white",padding:"8px 14px",fontSize:"12px",fontWeight:"700"}}>{day} — {absentStaff.length} absent</div>
+                          {absentStaff.map(s=>{
+                            const sched=dayAssignments.filter(a=>a.staffId===s.id&&!a.unassigned&&!a.isOT);
+                            const normalHrs=s.dayHours?.[day]??(["Saturday","Sunday"].includes(day)?0:s.hoursPerDay??7);
+                            const partialEntry=(al.find(x=>typeof x==="object"&&x.id===s.id));
+                            const absHrs=al.includes(s.id)?normalHrs:(partialEntry?.hours||0);
+                            if(sched.length===0)return(
+                              <div key={s.id} style={{padding:"8px 14px",fontSize:"12px",color:C.textLight,borderBottom:`1px solid ${C.borderLight}`}}>
+                                {s.name} — {absHrs}h absent, no assignments to cover.
+                              </div>
+                            );
+                            return(
+                              <div key={s.id} style={{padding:"10px 14px",borderBottom:`1px solid ${C.borderLight}`}}>
+                                <div style={{fontSize:"12px",fontWeight:"600",color:C.navy,marginBottom:"6px"}}>{s.name} — {absHrs}h absent</div>
+                                {sched.map((a,ai)=>{
+                                  const candidates=staff.filter(cs=>{
+                                    if(cs.id===s.id)return false;
+                                    const csAbs=absences[day]||[];
+                                    if(csAbs.includes(cs.id)||csAbs.some(x=>typeof x==="object"&&x.id===cs.id))return false;
+                                    const contracted=cs.dayHours?.[day]??(["Saturday","Sunday"].includes(day)?0:cs.hoursPerDay??7);
+                                    const already=dayAssignments.filter(da=>da.staffId===cs.id&&!da.unassigned).reduce((s,da)=>s+da.hours,0);
+                                    return contracted-already>=a.hours*0.5;
+                                  }).sort((ca,cb)=>{
+                                    const sameGHA=dayAssignments.some(da=>da.staffId===ca.id&&da.greenhouse===a.greenhouse);
+                                    const sameGHB=dayAssignments.some(da=>da.staffId===cb.id&&da.greenhouse===a.greenhouse);
+                                    if(sameGHA&&!sameGHB)return-1;
+                                    if(!sameGHA&&sameGHB)return 1;
+                                    return 0;
+                                  }).slice(0,3);
+                                  const isND=["Picking","Harvesting"].some(nd=>a.activity?.toLowerCase().includes(nd.toLowerCase()));
+                                  return(
+                                    <div key={ai} style={{display:"flex",alignItems:"center",gap:"10px",padding:"5px 0",borderBottom:"1px dashed #e5e7eb",flexWrap:"wrap"}}>
+                                      <span style={{fontSize:"11px",background:isND?"#fee2e2":"#f0f4f8",color:isND?C.red:C.navy,padding:"2px 8px",borderRadius:"10px",fontWeight:"600",whiteSpace:"nowrap"}}>{a.activity} — {a.greenhouse} ({a.hours}h){isND?" ⚠️ Non-deferrable":""}</span>
+                                      {candidates.length>0?(
+                                        <span style={{fontSize:"11px",color:C.textMid}}>→ Suggest: {candidates.map(c=>{const sameGH=dayAssignments.some(da=>da.staffId===c.id&&da.greenhouse===a.greenhouse);return<span key={c.id} style={{background:sameGH?"#d1fae5":"#f3f4f6",color:sameGH?"#065f46":C.textDark,padding:"1px 6px",borderRadius:"8px",marginLeft:"4px",fontWeight:sameGH?"700":"400"}}>{c.name}{sameGH?" ★":""}</span>;})}
+                                        </span>
+                                      ):(
+                                        <span style={{fontSize:"11px",color:C.red}}>⚠️ No available coverage — {isND?"production lost":"consider OT or reschedule"}</span>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    }).filter(Boolean)}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1628,27 +1706,28 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
     }
     return 1;
   };
+  // Standards are keyed by cropName (not planId) — one standard per crop type applies to ALL GHs growing it
   const getOrInitStd=(plan,act)=>{
-    const saved=carStandards[plan?.id]?.[act];
+    const saved=carStandards[plan?.cropName]?.[act];
     if(saved)return saved;
     const n=getDefaultTimesPerWeek(plan,act);
     return{timesPerWeek:n,mode:n>1?"alt":"once",days:defaultDaysFor(n)};
   };
-  const updateStd=(planId,act,updates)=>{
+  const updateStd=(cropName,act,updates)=>{
     setCarStandards(prev=>{
-      const ps=prev[planId]||{};const cur=ps[act]||{timesPerWeek:1,mode:"once",days:["Tuesday"]};
+      const ps=prev[cropName]||{};const cur=ps[act]||{timesPerWeek:1,mode:"once",days:["Tuesday"]};
       let ns={...cur,...updates};
       if(updates.timesPerWeek!==undefined&&parseInt(updates.timesPerWeek)!==cur.timesPerWeek){
         const n=parseInt(updates.timesPerWeek)||1;ns.mode=n>1?"alt":"once";ns.days=defaultDaysFor(n);
       }
-      return{...prev,[planId]:{...ps,[act]:ns}};
+      return{...prev,[cropName]:{...ps,[act]:ns}};
     });
   };
-  const toggleStdDay=(planId,act,fullDay,std)=>{
+  const toggleStdDay=(cropName,act,fullDay,std)=>{
     const days=std.days||[];
     const nd=days.includes(fullDay)?days.filter(d=>d!==fullDay):[...days,fullDay];
     if(!nd.length)return;
-    updateStd(planId,act,{days:nd});
+    updateStd(cropName,act,{days:nd});
   };
 
   // Allocate a specific plan+week from standards (returns {key, result})
@@ -1661,7 +1740,7 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
     rows.forEach(act=>{
       const total=weeklyTarget(act,wi,plan);
       if(!total||total===0)return;
-      const std=carStandards[plan.id]?.[act]||getOrInitStd(plan,act);
+      const std=carStandards[plan.cropName]?.[act]||getOrInitStd(plan,act);
       let workDays;
       if(std.days&&std.days.length>0){
         if(std.mode==="alt"){
@@ -1683,20 +1762,23 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
     return{key,result};
   };
 
-  // Recalculate all unconfirmed weeks of a plan
-  const recalcPlanWeeks=(planId)=>{
-    const plan=ydpPlans.find(p=>p.id===planId);
-    if(!plan)return;
-    if(addAuditEntry)addAuditEntry("standard",`Standards applied — ${ghNameMap[plan.ghId]||plan.ghId} ${plan.cropName}`,{gh:ghNameMap[plan.ghId],crop:plan.cropName});
-    setDailyAllocation(prev=>{
-      const next={...prev};
+  // Recalculate all unconfirmed weeks for ALL plans sharing the same cropName
+  const recalcPlanWeeks=(cropName)=>{
+    const plans=ydpPlans.filter(p=>p.cropName===cropName);
+    if(!plans.length)return;
+    if(addAuditEntry)addAuditEntry("standard",`Standards applied — ${cropName} (all GHs)`,{crop:cropName});
+    let totalUpdates={};
+    plans.forEach(plan=>{
       for(let wi=0;wi<plan.cycleWeeks;wi++){
-        if(confirmedWeeks[`${planId}__w${wi}`])continue;
+        if(confirmedWeeks[`${plan.id}__w${wi}`])continue;
         const{key,result}=allocPlanWeek(plan,wi);
-        if(Object.keys(result).length>0)next[key]=result;
+        totalUpdates[key]=result;
       }
-      return next;
     });
+    if(Object.keys(totalUpdates).length>0){
+      setDailyAllocation(prev=>({...prev,...totalUpdates}));
+      if(setDemandVersion)setDemandVersion(v=>v+1);
+    }
   };
 
   // Auto-allocate current week when it has no data yet
@@ -1772,8 +1854,8 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
       {/* ══ CROP ACTIVITY STANDARDS ══ */}
       {demandSubTab==="standards"&&(
         <div>
-          <div style={{marginBottom:"12px",padding:"10px 14px",background:"#e0f2fe",border:"1px solid #bae6fd",borderRadius:"8px",fontSize:"12px",color:"#0369a1"}}>
-            Define which days each activity runs. Unconfirmed weeks auto-recalculate when you click Apply. Confirmed weeks are never overwritten.
+          <div style={{marginBottom:"12px",padding:"10px 14px",background:"#fef3c7",border:"1px solid #fcd34d",borderRadius:"8px",fontSize:"12px",color:"#92400e"}}>
+            ⚠️ <strong>Standards are per crop type</strong> — a change here applies to <em>all greenhouses</em> growing that crop. Unconfirmed weeks only; confirmed weeks are locked and must be edited manually.
           </div>
           <div style={{display:"flex",gap:0,height:"calc(100vh - 260px)",borderRadius:"10px",overflow:"hidden",border:`1px solid ${C.border}`,boxShadow:"0 2px 12px rgba(0,0,0,0.08)"}}>
             {/* GH sidebar */}
@@ -1817,21 +1899,21 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
                     <tbody>
                       {[...Object.keys(selPlan.grid?.activities||{}).filter(a=>!SPECIAL.includes(a)),...SPECIAL.filter(s=>weeklyTarget(s,0,selPlan)>0||true)].map((act,ai)=>{
                         const std=getOrInitStd(selPlan,act);
-                        const saved=carStandards[selPlan.id]?.[act]||std;
+                        const saved=carStandards[selPlan.cropName]?.[act]||std;
                         const isAlt=saved.mode==="alt";
                         return(
                           <tr key={act} style={{background:ai%2===0?"white":"#f8faf8",borderBottom:`1px solid ${C.border}`}}>
                             <td style={{padding:"10px 16px",fontWeight:"600",color:SPECIAL.includes(act)?"#d4880e":C.textDark}}>{act}</td>
                             <td style={{padding:"10px 16px",textAlign:"center"}}>
                               <input type="number" min="1" max="7" value={saved.timesPerWeek||1}
-                                onChange={e=>updateStd(selPlan.id,act,{timesPerWeek:parseInt(e.target.value)||1})}
+                                onChange={e=>updateStd(selPlan.cropName,act,{timesPerWeek:parseInt(e.target.value)||1})}
                                 style={{width:"56px",padding:"5px 8px",border:`1px solid ${C.border}`,borderRadius:"6px",textAlign:"center",fontSize:"13px",fontWeight:"700"}}/>
                             </td>
                             <td style={{padding:"10px 16px"}}>
                               <div style={{display:"flex",alignItems:"center",gap:"10px",flexWrap:"wrap"}}>
                                 <div style={{display:"flex",borderRadius:"6px",overflow:"hidden",border:`1px solid ${C.border}`}}>
-                                  <button onClick={()=>updateStd(selPlan.id,act,{mode:"once"})} style={{padding:"5px 14px",background:!isAlt?C.teal:"white",color:!isAlt?"white":C.textMid,border:"none",cursor:"pointer",fontSize:"12px",fontWeight:"600"}}>Once weekly</button>
-                                  <button onClick={()=>updateStd(selPlan.id,act,{mode:"alt"})} style={{padding:"5px 14px",background:isAlt?C.teal:"white",color:isAlt?"white":C.textMid,border:"none",cursor:"pointer",fontSize:"12px",fontWeight:"600"}}>Specific days</button>
+                                  <button onClick={()=>updateStd(selPlan.cropName,act,{mode:"once"})} style={{padding:"5px 14px",background:!isAlt?C.teal:"white",color:!isAlt?"white":C.textMid,border:"none",cursor:"pointer",fontSize:"12px",fontWeight:"600"}}>Once weekly</button>
+                                  <button onClick={()=>updateStd(selPlan.cropName,act,{mode:"alt"})} style={{padding:"5px 14px",background:isAlt?C.teal:"white",color:isAlt?"white":C.textMid,border:"none",cursor:"pointer",fontSize:"12px",fontWeight:"600"}}>Specific days</button>
                                 </div>
                                 {isAlt?(
                                   <div style={{display:"flex",gap:"4px"}}>
@@ -1839,7 +1921,7 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
                                       const sel=saved.days?.includes(fd);
                                       const isWE=di>=5;
                                       return(
-                                        <button key={fd} onClick={()=>toggleStdDay(selPlan.id,act,fd,saved)}
+                                        <button key={fd} onClick={()=>toggleStdDay(selPlan.cropName,act,fd,saved)}
                                           style={{width:"36px",height:"34px",borderRadius:"6px",background:sel?(isWE?"#f59e0b":C.teal):"white",color:sel?"white":(isWE?"#b45309":C.textMid),border:`1px solid ${sel?(isWE?"#f59e0b":C.teal):C.border}`,cursor:"pointer",fontSize:"11px",fontWeight:"700"}}>
                                           {DAYS[di]}
                                         </button>
@@ -1854,7 +1936,7 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
                               </div>
                             </td>
                             <td style={{padding:"10px 16px",textAlign:"center"}}>
-                              <button onClick={()=>recalcPlanWeeks(selPlan.id)} style={{...btn(true,C.teal),padding:"5px 12px",fontSize:"11px"}}>↻ Apply</button>
+                              <button onClick={()=>recalcPlanWeeks(selPlan.cropName)} style={{...btn(true,C.teal),padding:"5px 12px",fontSize:"11px"}}>↻ Apply All</button>
                             </td>
                           </tr>
                         );

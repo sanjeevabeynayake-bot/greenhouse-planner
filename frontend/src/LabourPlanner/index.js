@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { SEED_CROPS, SEED_ACTIVITIES, SEED_GREENHOUSES } from "../data/masterSeeds";
 import { LP, lpBtn } from "./styles";
+import LPDashboard from "./LPDashboard";
 import CropCycleMaster from "./CropCycleMaster";
 import GreenhouseMaster from "./GreenhouseMaster";
 import CropMaster from "./CropMaster";
@@ -9,6 +10,7 @@ import PickingMaster from "./PickingMaster";
 import YearlyDemandPlanner from "./YearlyDemandPlanner";
 
 const MASTER_TABS = [
+  { id: "dashboard",   label: "Dashboard",             icon: "🏠" },
   { id: "cropCycle",   label: "Crop Cycle Master",    icon: "🌱" },
   { id: "greenhouse",  label: "Greenhouse Master",     icon: "🏗️" },
   { id: "cropMaster",  label: "Crop Master",           icon: "📊" },
@@ -54,7 +56,7 @@ function initGreenhouses() {
 }
 
 export default function LabourPlanner({ lpRole: initRole }) {
-  const [activeTab, setActiveTab] = useState("cropCycle");
+  const [activeTab, setActiveTab] = useState("dashboard");
   const [lpRole, setLpRole] = useState(initRole || "grower");
 
   const [activities, setActivities] = useState(() => loadLS()?.activities ?? SEED_ACTIVITIES);
@@ -156,6 +158,16 @@ export default function LabourPlanner({ lpRole: initRole }) {
       </div>
 
       <div style={{ padding: 20, maxWidth: 1600, margin: "0 auto" }}>
+        {activeTab === "dashboard"   && (
+          <LPDashboard
+            cropCycles={cropCycles}
+            cropMasterData={cropMasterData}
+            greenhouses={greenhouses}
+            pollinationData={pollinationData}
+            pickingData={pickingData}
+            activities={activities}
+          />
+        )}
         {activeTab === "cropCycle"   && <CropCycleMaster {...sharedProps} />}
         {activeTab === "greenhouse"  && <GreenhouseMaster {...sharedProps} />}
         {activeTab === "cropMaster"  && <CropMaster {...sharedProps} />}
