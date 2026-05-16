@@ -1751,14 +1751,12 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
   const selPlan=selGH?.plans.find(p=>p.id===selPlanId)||selGH?.plans[0]||null;
   const allocKey=selPlan?`${selPlan.id}__w${selWeekIdx}`:null;
   const isConfirmed=allocKey?!!confirmedWeeks[allocKey]:false;
-  // For confirmed weeks: use stored allocation (preserves manual adjustments)
-  // For unconfirmed weeks: always compute fresh from plan.grid + standards — never show stale stored data
+  // Always compute from YDP grid + standards — never from stale stored state
   const weekAlloc=React.useMemo(()=>{
     if(!allocKey||!selPlan)return{};
-    if(isConfirmed)return dailyAllocation[allocKey]||{};
     const{result}=allocPlanWeek(selPlan,selWeekIdx);
     return result;
-  },[allocKey,isConfirmed,dailyAllocation,demandVersion]);// eslint-disable-line react-hooks/exhaustive-deps
+  },[allocKey,selPlan,selWeekIdx,demandVersion,carStandards,wsHolidays]);// eslint-disable-line react-hooks/exhaustive-deps
 
   // All rows for the selected plan (weekly planner)
   const actRows=selPlan?Object.keys(selPlan.grid?.activities||{}).filter(a=>!SPECIAL.includes(a)):[];
@@ -1913,39 +1911,7 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
     alert(`✅ Demand recalculated — ${Object.keys(updates).length} week(s) reset.\n\nAll unconfirmed weeks now use Mon–Fri only with correct day allocations.`);
   };
 
-  // When navigating to a different week — recompute that week from standards
-  React.useEffect(()=>{
-    if(!selPlan||!allocKey||isConfirmed)return;
-    const{key,result}=allocPlanWeek(selPlan,selWeekIdx);
-    setDailyAllocation(prev=>{
-      const n={...prev};
-      if(Object.keys(result).length>0)n[key]=result;else delete n[key];
-      return n;
-    });
-  },[allocKey]);// eslint-disable-line react-hooks/exhaustive-deps
-
-  // Full recompute of ALL unconfirmed weeks whenever demand version changes (cloud sync, YDP populate, standards apply)
-  React.useEffect(()=>{
-    if(ydpPlans.length===0)return;
-    const updates={};
-    ydpPlans.forEach(plan=>{
-      for(let wi=0;wi<(plan.cycleWeeks||0);wi++){
-        const wKey=`${plan.id}__w${wi}`;
-        if(confirmedWeeks[wKey])continue;
-        const{key,result}=allocPlanWeek(plan,wi);
-        updates[key]=result;
-      }
-    });
-    if(!Object.keys(updates).length)return;
-    setDailyAllocation(prev=>{
-      const next={};
-      // Keep only confirmed week allocations from previous state
-      Object.keys(prev).forEach(k=>{if(confirmedWeeks[k])next[k]=prev[k];});
-      // Overwrite all unconfirmed weeks with freshly computed values
-      Object.assign(next,updates);
-      return next;
-    });
-  },[demandVersion]);// eslint-disable-line react-hooks/exhaustive-deps
+  // No stored-state sync effects needed — weekAlloc always computes directly from allocPlanWeek
 
   // Daily allocation accessors
   const getAllocVal=(act,day)=>{const v=weekAlloc[act]?.[day];return v!=null?v:"";};
@@ -1973,6 +1939,14 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
     if(!allocKey)return;
     setConfirmedWeeks(prev=>{const n={...prev};delete n[allocKey];return n;});
     if(addAuditEntry)addAuditEntry("unconfirm",`Week ${selWeekIdx+1} unconfirmed — ${selGH?.name||""} ${selPlan?.cropName||""}`,{gh:selGH?.name,week:selWeekIdx+1,crop:selPlan?.cropName});
+  };
+  const clearPlanData=()=>{
+    if(!selPlan)return;
+    if(!window.confirm(`Clear all stored allocation data for ${selPlan.cropName} in ${selGH?.name||""}? This will remove all confirmed weeks for this plan so they can be repopulated.`))return;
+    const pid=selPlan.id;
+    setDailyAllocation(prev=>{const n={};Object.keys(prev).forEach(k=>{if(!k.startsWith(pid))n[k]=prev[k];});return n;});
+    setConfirmedWeeks(prev=>{const n={};Object.keys(prev).forEach(k=>{if(!k.startsWith(pid))n[k]=prev[k];});return n;});
+    if(addAuditEntry)addAuditEntry("clear_plan",`Plan data cleared — ${selGH?.name||""} ${selPlan.cropName}`,{gh:selGH?.name,crop:selPlan.cropName});
   };
 
   // Totals
@@ -2233,6 +2207,7 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
                         <span style={{background:"#dcfce7",color:"#166534",padding:"4px 10px",borderRadius:"12px",fontSize:"11px",fontWeight:"700"}}>✓ Confirmed</span></>
                       :<button onClick={confirmWeek} style={{...btn(true,C.green),padding:"6px 14px",fontSize:"12px"}}>✓ Confirm week</button>
                     }
+                    <button onClick={clearPlanData} title="Clear all stored allocation data for this plan" style={{...btn(false,"#dc2626"),padding:"6px 12px",fontSize:"12px"}}>🗑 Clear plan data</button>
                   </div>
 
                   {/* Grid */}
@@ -2267,12 +2242,12 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
                               {DAYS.map((day,di)=>{
                                 const isWE=di>=5;
                                 const hVal=getAllocVal(act,day);
+                                const numVal=hVal!==""?parseFloat(hVal):null;
                                 return(
                                   <td key={day} style={{padding:"3px",textAlign:"center",borderBottom:`1px solid #e5e7eb`,background:isWE?"#fffbf0":undefined}}>
-                                    <input type="number" min="0" step="0.5" value={hVal}
-                                      onChange={e=>setAllocVal(act,day,e.target.value)}
-                                      placeholder="–"
-                                      style={{width:"60px",padding:"4px 3px",border:`1px solid ${C.border}`,borderRadius:"4px",textAlign:"center",fontSize:"12px",background:hVal!==""&&parseFloat(hVal)>0?"white":"#f5f5f5",color:C.textDark}}/>
+                                    <div style={{width:"60px",margin:"0 auto",padding:"5px 4px",textAlign:"center",fontSize:"13px",fontWeight:numVal>0?"700":"400",color:numVal>0?(isWE?"#92400e":C.navy):C.textLight,borderRadius:"4px",background:numVal>0?(isWE?"#fef3c7":"#f0fdf4"):"transparent"}}>
+                                      {numVal>0?numVal.toFixed(1):"–"}
+                                    </div>
                                   </td>
                                 );
                               })}
