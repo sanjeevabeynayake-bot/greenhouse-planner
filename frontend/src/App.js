@@ -1543,10 +1543,23 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
 
   // Standards helpers
   const getDefaultTimesPerWeek=(plan,act)=>{
+    const cycles=lpData.cropCycles||[];
+    const cyc=cycles.find(c=>c.name===plan?.cropName);
     if(act==="Picking"){
-      const cycles=lpData.cropCycles||[];const picks=lpData.pickingData||[];
-      const cyc=cycles.find(c=>c.name===plan?.cropName);
-      if(cyc){const pd=picks.find(d=>d.cropId===cyc.id);if(pd?.roundsPerWeek)return Math.max(1,parseInt(pd.roundsPerWeek)||1);}
+      const pd=(lpData.pickingData||[]).find(d=>d.cropId===cyc?.id);
+      if(pd?.roundsPerWeek)return Math.max(1,parseInt(pd.roundsPerWeek)||1);
+      return 1;
+    }
+    if(act==="Pollination"){
+      const pol=(lpData.pollinationData||[]).find(d=>d.ghId===plan?.ghId);
+      if(pol?.roundsPerWeek)return Math.max(1,parseInt(pol.roundsPerWeek)||1);
+      return 1;
+    }
+    // All other activities: read ×/wk from Crop Master cells[act].t
+    if(cyc){
+      const cmd=(lpData.cropMasterData||[]).find(d=>d.cropId===cyc.id);
+      const t=cmd?.cells?.[act]?.t;
+      if(t)return Math.max(1,parseInt(t)||1);
     }
     return 1;
   };
