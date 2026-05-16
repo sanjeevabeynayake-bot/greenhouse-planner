@@ -56,6 +56,9 @@ export default function App() {
   const [adelaideTime,setAdelaideTime]=useState("");
   const [quarantine,setQuarantine]=useState([]);
   const [quarantineHistory,setQuarantineHistory]=useState([]);
+  const [auditLog,setAuditLog]=useState(()=>{try{return JSON.parse(localStorage.getItem("ws_audit_log_v1"))||[];}catch{return [];}});
+  const [showAudit,setShowAudit]=useState(false);
+  const [auditFilter,setAuditFilter]=useState("all");
   const [cycles,setCycles]=useState([]);
   const [activeCycleId,setActiveCycleId]=useState(null);
   const [activeWeekIndex,setActiveWeekIndex]=useState(0);
@@ -106,6 +109,12 @@ export default function App() {
   useEffect(()=>{localStorage.setItem("ws_confirmed_weeks_v1",JSON.stringify(confirmedWeeks));},[confirmedWeeks]);
   useEffect(()=>{localStorage.setItem("ws_schedule_v1",JSON.stringify(scheduleData));},[scheduleData]);
   useEffect(()=>{localStorage.setItem("ws_car_standards_v1",JSON.stringify(carStandards));},[carStandards]);
+  useEffect(()=>{localStorage.setItem("ws_audit_log_v1",JSON.stringify(auditLog));},[auditLog]);
+
+  const addAuditEntry=React.useCallback((type,label,meta={})=>{
+    const entry={id:`audit_${Date.now()}_${Math.random().toString(36).slice(2,6)}`,ts:new Date().toISOString(),type,label,...meta};
+    setAuditLog(prev=>[entry,...prev].slice(0,200));
+  },[]);
 
   const normaliseGH=(gh)=>{if(typeof gh==="string")return{id:gh,name:gh,cropTypes:[]};return{id:gh.id||gh.name||"",name:gh.name||gh.id||"",cropTypes:gh.cropTypes||[]};};
   const normaliseStaff=(s)=>({cropTypes:s.cropTypes!==undefined?s.cropTypes:[],cropActivities:s.cropActivities!==undefined?s.cropActivities:{},...s});
@@ -609,6 +618,61 @@ export default function App() {
 
             {/* Cluster transition time UI */}
             <ClusterTransitionUI clusters={clusters} setClusters={setClusters} clusterTransitions={clusterTransitions} setClusterTransitions={setClusterTransitions} ghNames={ghNames} btn={btn} inp={inp} card={card} C={C}/>
+
+            {/* ── Collapsible Audit Trail ── */}
+            <div style={{...card,marginTop:"16px",padding:0,overflow:"hidden"}}>
+              <div onClick={()=>setShowAudit(v=>!v)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 16px",cursor:"pointer",background:showAudit?C.light:"white",borderBottom:showAudit?`1px solid ${C.border}`:"none"}}>
+                <div style={{display:"flex",alignItems:"center",gap:"10px"}}>
+                  <span style={{fontWeight:"700",fontSize:"14px",color:C.navy}}>📋 Change Log</span>
+                  <span style={{background:auditLog.length>0?"#e0f2fe":"#f3f4f6",color:auditLog.length>0?"#0369a1":C.textLight,fontSize:"11px",fontWeight:"700",padding:"2px 8px",borderRadius:"10px"}}>{auditLog.length} entries</span>
+                </div>
+                <span style={{color:C.textMid,fontSize:"13px"}}>{showAudit?"▲ collapse":"▼ expand"}</span>
+              </div>
+              {showAudit&&(
+                <div style={{padding:"12px 16px"}}>
+                  <div style={{display:"flex",gap:"6px",marginBottom:"10px",flexWrap:"wrap"}}>
+                    {["all","confirm","unconfirm","holiday_add","holiday_remove","standard","quarantine"].map(f=>(
+                      <button key={f} onClick={()=>setAuditFilter(f)} style={{padding:"3px 10px",background:auditFilter===f?C.navy:"white",color:auditFilter===f?"white":C.textMid,border:`1px solid ${auditFilter===f?C.navy:C.border}`,borderRadius:"12px",cursor:"pointer",fontSize:"11px",fontWeight:"600"}}>
+                        {f==="all"?"All":f==="confirm"?"Confirmed":f==="unconfirm"?"Unconfirmed":f==="holiday_add"?"Holiday +":f==="holiday_remove"?"Holiday –":f==="standard"?"Standards":f==="quarantine"?"Quarantine":f}
+                      </button>
+                    ))}
+                    {auditLog.length>0&&<button onClick={()=>{if(window.confirm("Clear all audit log entries?"))setAuditLog([]);}} style={{marginLeft:"auto",padding:"3px 10px",background:"white",color:"#dc2626",border:"1px solid #fca5a5",borderRadius:"12px",cursor:"pointer",fontSize:"11px"}}>Clear log</button>}
+                  </div>
+                  {auditLog.filter(e=>auditFilter==="all"||e.type===auditFilter).length===0?(
+                    <p style={{color:C.textLight,fontStyle:"italic",fontSize:"13px",margin:0}}>No entries yet.</p>
+                  ):(
+                    <div style={{maxHeight:"320px",overflowY:"auto"}}>
+                      <table style={{width:"100%",borderCollapse:"collapse",fontSize:"12px"}}>
+                        <thead style={{position:"sticky",top:0,background:"#f0f4f8",zIndex:1}}>
+                          <tr>
+                            <th style={{padding:"6px 10px",textAlign:"left",color:C.navy,fontWeight:"700",borderBottom:`1px solid ${C.border}`,width:"130px"}}>When</th>
+                            <th style={{padding:"6px 10px",textAlign:"left",color:C.navy,fontWeight:"700",borderBottom:`1px solid ${C.border}`,width:"100px"}}>Type</th>
+                            <th style={{padding:"6px 10px",textAlign:"left",color:C.navy,fontWeight:"700",borderBottom:`1px solid ${C.border}`}}>Detail</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {auditLog.filter(e=>auditFilter==="all"||e.type===auditFilter).slice(0,50).map((e,i)=>{
+                            const typeColors={confirm:"#16a34a",unconfirm:"#d97706",holiday_add:"#0369a1",holiday_remove:"#7c3aed",standard:"#0891b2",quarantine:"#dc2626"};
+                            const typeLabels={confirm:"Confirmed",unconfirm:"Unconfirmed",holiday_add:"Holiday +",holiday_remove:"Holiday –",standard:"Standards",quarantine:"Quarantine"};
+                            const ts=new Date(e.ts);
+                            const dtStr=ts.toLocaleDateString("en-AU",{day:"2-digit",month:"short"})+" "+ts.toLocaleTimeString("en-AU",{hour:"2-digit",minute:"2-digit"});
+                            return(
+                              <tr key={e.id} style={{background:i%2===0?"white":"#f8faf8"}}>
+                                <td style={{padding:"6px 10px",color:C.textMid,borderBottom:`1px solid ${C.borderLight}`,whiteSpace:"nowrap"}}>{dtStr}</td>
+                                <td style={{padding:"6px 10px",borderBottom:`1px solid ${C.borderLight}`}}>
+                                  <span style={{background:`${typeColors[e.type]||"#6b7280"}18`,color:typeColors[e.type]||"#6b7280",padding:"2px 7px",borderRadius:"10px",fontSize:"10px",fontWeight:"700",whiteSpace:"nowrap"}}>{typeLabels[e.type]||e.type}</span>
+                                </td>
+                                <td style={{padding:"6px 10px",color:C.textDark,borderBottom:`1px solid ${C.borderLight}`}}>{e.label}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -647,6 +711,7 @@ export default function App() {
             confirmedWeeks={confirmedWeeks} setConfirmedWeeks={setConfirmedWeeks}
             carStandards={carStandards} setCarStandards={setCarStandards}
             setDemandVersion={setDemandVersion}
+            addAuditEntry={addAuditEntry}
             role={role}
             btn={btn} inp={inp} card={card} C={C}/>
         )}
@@ -841,7 +906,7 @@ export default function App() {
               <span style={{background:"#ffe5e5",color:C.red,padding:"4px 10px",borderRadius:"20px",fontSize:"12px",fontWeight:"700"}}>{role==="gm"?"GM":"FULL ACCESS"}</span>
             </div>
             <div style={card}>
-              <QuarantinePanel staff={staff} ghList={ghList} quarantine={quarantine} setQuarantine={setQuarantine} quarantineHistory={quarantineHistory} setQuarantineHistory={setQuarantineHistory} schedule={schedule} btn={btn} inp={inp} C={C} API={API} adelaideTime={adelaideTime} fmtISOReadable={fmtISOReadable} role={role}/>
+              <QuarantinePanel staff={staff} ghList={ghList} quarantine={quarantine} setQuarantine={setQuarantine} quarantineHistory={quarantineHistory} setQuarantineHistory={setQuarantineHistory} schedule={schedule} dailyAllocation={dailyAllocation} setDailyAllocation={setDailyAllocation} confirmedWeeks={confirmedWeeks} setConfirmedWeeks={setConfirmedWeeks} wsHolidays={wsHolidays} activities={activities} addAuditEntry={addAuditEntry} btn={btn} inp={inp} C={C} API={API} adelaideTime={adelaideTime} fmtISOReadable={fmtISOReadable} role={role}/>
             </div>
           </div>
         )}
@@ -1474,7 +1539,7 @@ function SchedulePage({scheduleData,setScheduleData,dailyAllocation,confirmedWee
 // ═══════════════════════════════════════════════════════════════════════════════
 // DEMAND PAGE — splits YDP weekly hours into daily allocations per GH
 // ═══════════════════════════════════════════════════════════════════════════════
-function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation,confirmedWeeks,setConfirmedWeeks,carStandards,setCarStandards,setDemandVersion,role,btn,inp,card,C}){
+function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation,confirmedWeeks,setConfirmedWeeks,carStandards,setCarStandards,setDemandVersion,addAuditEntry,role,btn,inp,card,C}){
   const [demandSubTab,setDemandSubTab]=React.useState("weekly");
   const [selGHId,setSelGHId]=React.useState(null);
   const [selPlanId,setSelPlanId]=React.useState(null);
@@ -1624,6 +1689,7 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
   const recalcPlanWeeks=(planId)=>{
     const plan=ydpPlans.find(p=>p.id===planId);
     if(!plan)return;
+    if(addAuditEntry)addAuditEntry("standard",`Standards applied — ${ghNameMap[plan.ghId]||plan.ghId} ${plan.cropName}`,{gh:ghNameMap[plan.ghId],crop:plan.cropName});
     setDailyAllocation(prev=>{
       const next={...prev};
       for(let wi=0;wi<plan.cycleWeeks;wi++){
@@ -1661,8 +1727,13 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
     if(!allocKey)return;
     setConfirmedWeeks(prev=>({...prev,[allocKey]:true}));
     if(setDemandVersion)setDemandVersion(v=>v+1);
+    if(addAuditEntry)addAuditEntry("confirm",`Week ${selWeekIdx+1} confirmed — ${selGH?.name||""} ${selPlan?.cropName||""}`,{gh:selGH?.name,week:selWeekIdx+1,crop:selPlan?.cropName});
   };
-  const unconfirmWeek=()=>{if(allocKey)setConfirmedWeeks(prev=>{const n={...prev};delete n[allocKey];return n;});};
+  const unconfirmWeek=()=>{
+    if(!allocKey)return;
+    setConfirmedWeeks(prev=>{const n={...prev};delete n[allocKey];return n;});
+    if(addAuditEntry)addAuditEntry("unconfirm",`Week ${selWeekIdx+1} unconfirmed — ${selGH?.name||""} ${selPlan?.cropName||""}`,{gh:selGH?.name,week:selWeekIdx+1,crop:selPlan?.cropName});
+  };
 
   // Totals
   const rowTotal=(act)=>DAYS.reduce((s,d)=>s+(parseFloat(weekAlloc[act]?.[d])||0),0);
@@ -1679,9 +1750,14 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
   const addHoliday=()=>{
     if(!holidayForm.date||!holidayForm.label){alert("Date and label required.");return;}
     setWsHolidays(prev=>[...prev,{id:`hol_${Date.now()}`,date:holidayForm.date,scope:holidayForm.scope,ghName:holidayForm.ghName,label:holidayForm.label}]);
+    if(addAuditEntry)addAuditEntry("holiday_add",`Holiday added: ${holidayForm.label} (${holidayForm.date})`,{date:holidayForm.date,label:holidayForm.label});
     setHolidayForm({date:"",scope:"all",ghName:"",label:""});
   };
-  const removeHoliday=(id)=>setWsHolidays(prev=>prev.filter(h=>h.id!==id));
+  const removeHoliday=(id)=>{
+    const h=wsHolidays.find(x=>x.id===id);
+    if(addAuditEntry&&h)addAuditEntry("holiday_remove",`Holiday removed: ${h.label} (${h.date})`,{date:h.date,label:h.label});
+    setWsHolidays(prev=>prev.filter(x=>x.id!==id));
+  };
 
   return(
     <div>
@@ -2009,6 +2085,7 @@ function OvertimePage({staff,ghList,activities,schedule,absences,overtimeEntries
   const [manualEntry,setManualEntry]=useState({staffId:"",greenhouse:"",activity:"",day:"Monday",hours:"",ratePerHour:""});
   const [showAddManual,setShowAddManual]=useState(false);
   const [eligibilityWarning,setEligibilityWarning]=useState(null);
+  const [showOTBalance,setShowOTBalance]=useState(false);
 
   const ghNames=ghList.map(g=>g.name);
   const ALL_DAYS_LOCAL=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
@@ -2044,21 +2121,33 @@ function OvertimePage({staff,ghList,activities,schedule,absences,overtimeEntries
     try{
       const res=await axios.post(`${API}/overtime/calculate`,{staff,greenhouses:ghList,activities,schedule,absences});
       if(res.data.entries){
-        const entries=res.data.entries.map(e=>({...e,ratePerHour:defaultRate?parseFloat(defaultRate):null,estimatedCost:defaultRate&&e.hours?parseFloat(defaultRate)*e.hours:null,source:"system",id:`ot_${Date.now()}_${Math.random()}`}));
+        // Filter out non-OT-willing staff, then sort by least OT hours (fairness)
+        const nonWilling=new Set(staff.filter(s=>s.otWilling===false).map(s=>s.id));
+        const rawEntries=res.data.entries.filter(e=>!nonWilling.has(e.staffId));
+        const otUsedMap={};rawEntries.forEach(e=>{otUsedMap[e.staffId]=(otUsedMap[e.staffId]||0)+(parseFloat(e.hours)||0);});
+        const sorted=[...rawEntries].sort((a,b)=>(otUsedMap[a.staffId]||0)-(otUsedMap[b.staffId]||0));
+        const entries=sorted.map(e=>({...e,ratePerHour:defaultRate?parseFloat(defaultRate):null,estimatedCost:defaultRate&&e.hours?parseFloat(defaultRate)*e.hours:null,source:"system",id:`ot_${Date.now()}_${Math.random()}`}));
         setOvertimeEntries(entries);
         if(entries.length===0)alert("No unassigned hours found — no overtime needed.");
+        if(nonWilling.size>0&&rawEntries.length<res.data.entries.length)alert(`ℹ️ ${res.data.entries.length-rawEntries.length} OT assignment(s) excluded — staff marked as not OT willing.`);
       }
     }catch(e){alert("Error: "+e.message);}
     setGenerating(false);
   };
 
+  const toggleLock=(id)=>{
+    setOvertimeEntries(prev=>prev.map(e=>e.id===id?{...e,locked:!e.locked}:e));
+  };
+
   const deleteEntry=(id)=>{
+    if(overtimeEntries.find(e=>e.id===id)?.locked)return alert("Unlock this entry before deleting.");
     const updated=overtimeEntries.filter(e=>e.id!==id);
     setOvertimeEntries(updated);
     rebuildScheduleFromOT(updated);
   };
 
   const updateEntry=(id,changes)=>{
+    if(overtimeEntries.find(e=>e.id===id)?.locked)return;
     const newEntries=overtimeEntries.map(e=>{
       if(e.id!==id)return e;
       const updated={...e,...changes};
@@ -2076,6 +2165,11 @@ function OvertimePage({staff,ghList,activities,schedule,absences,overtimeEntries
   const addManual=async()=>{
     if(!manualEntry.staffId||!manualEntry.greenhouse||!manualEntry.activity)return alert("Please fill in staff, greenhouse and activity.");
     const s=staff.find(x=>x.id===manualEntry.staffId);
+
+    // Check OT willing flag
+    if(s?.otWilling===false){
+      if(!window.confirm(`⚠️ ${s?.name} has indicated they are NOT willing to do overtime. Add anyway (GM override)?`))return;
+    }
 
     // Check 30hr OT cap
     const otUsed=getStaffOTHoursUsed(manualEntry.staffId);
@@ -2123,11 +2217,40 @@ function OvertimePage({staff,ghList,activities,schedule,absences,overtimeEntries
 
       {overtimeEntries.length>0&&(
         <div style={{...card,background:"#fff8ee",padding:"14px",marginBottom:"14px",borderLeft:`4px solid ${C.gold}`}}>
-          <div style={{display:"flex",gap:"24px",flexWrap:"wrap",fontSize:"13px"}}>
-            <span>⏱️ <strong>Total OT Hours:</strong> {totalOTHours.toFixed(1)}h</span>
-            <span>👥 <strong>Staff on OT:</strong> {new Set(overtimeEntries.map(e=>e.staffId)).size}</span>
-            {totalCost>0&&<span>💰 <strong>Estimated Cost:</strong> ${totalCost.toFixed(2)}</span>}
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:"12px"}}>
+            <div style={{display:"flex",gap:"24px",flexWrap:"wrap",fontSize:"13px"}}>
+              <span>⏱️ <strong>Total OT Hours:</strong> {totalOTHours.toFixed(1)}h</span>
+              <span>👥 <strong>Staff on OT:</strong> {new Set(overtimeEntries.map(e=>e.staffId)).size}</span>
+              {totalCost>0&&<span>💰 <strong>Estimated Cost:</strong> ${totalCost.toFixed(2)}</span>}
+              <span>🔒 <strong>Locked:</strong> {overtimeEntries.filter(e=>e.locked).length}</span>
+            </div>
+            <button onClick={()=>setShowOTBalance(v=>!v)} style={{...btn(showOTBalance,C.navy),padding:"4px 12px",fontSize:"12px"}}>{showOTBalance?"▲ Hide":"📊 OT Balance"}</button>
           </div>
+          {showOTBalance&&(
+            <div style={{marginTop:"12px",borderTop:"1px solid #fde68a",paddingTop:"10px"}}>
+              <div style={{fontSize:"11px",fontWeight:"700",color:C.textMid,textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:"8px"}}>OT Balance — This Week (sorted: most OT first)</div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:"6px"}}>
+                {[...staff].sort((a,b)=>getStaffOTHoursUsed(b.id)-getStaffOTHoursUsed(a.id)).map(s=>{
+                  const used=getStaffOTHoursUsed(s.id);
+                  const cap=s.overtimeLimit??30;
+                  const pct=cap>0?Math.min(used/cap,1):0;
+                  const notWilling=s.otWilling===false;
+                  return(
+                    <div key={s.id} style={{background:"white",borderRadius:"6px",padding:"8px 10px",border:`1px solid ${used>cap*0.8?"#fca5a5":used>0?"#fde68a":"#e5e7eb"}`}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"4px"}}>
+                        <span style={{fontSize:"12px",fontWeight:"600",color:C.navy}}>{s.name}</span>
+                        {notWilling&&<span style={{fontSize:"10px",color:C.orange}}>🚫 No OT</span>}
+                      </div>
+                      <div style={{height:"5px",background:"#e5e7eb",borderRadius:"3px",overflow:"hidden",marginBottom:"4px"}}>
+                        <div style={{height:"100%",width:`${pct*100}%`,background:pct>0.8?C.red:pct>0.5?C.orange:C.green,borderRadius:"3px",transition:"width 0.3s"}}/>
+                      </div>
+                      <div style={{fontSize:"11px",color:used>0?C.textDark:C.textLight}}>{used.toFixed(1)} / {cap}h{used===0?" — No OT this week":""}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -2156,10 +2279,10 @@ function OvertimePage({staff,ghList,activities,schedule,absences,overtimeEntries
               </div>
             )}
             <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"10px",marginBottom:"10px"}}>
-              <div><label style={{fontSize:"12px",color:C.textMid,display:"block",marginBottom:"3px"}}>Staff:</label>
+              <div><label style={{fontSize:"12px",color:C.textMid,display:"block",marginBottom:"3px"}}>Staff (sorted: least OT first):</label>
                 <select value={manualEntry.staffId} onChange={e=>{setManualEntry(p=>({...p,staffId:e.target.value}));checkManualEligibility(e.target.value,manualEntry.greenhouse,manualEntry.activity);}} style={{...inp,width:"100%"}}>
                   <option value="">— Select —</option>
-                  {staff.map(s=>{const otUsed=getStaffOTHoursUsed(s.id);const cap=s.overtimeLimit??30;return <option key={s.id} value={s.id}>{s.name} ({s.id}) — OT: {otUsed.toFixed(1)}/{cap}h</option>;})}
+                  {[...staff].sort((a,b)=>getStaffOTHoursUsed(a.id)-getStaffOTHoursUsed(b.id)).map(s=>{const otUsed=getStaffOTHoursUsed(s.id);const cap=s.overtimeLimit??30;const notWilling=s.otWilling===false;return <option key={s.id} value={s.id}>{notWilling?"🚫 ":""}{s.name} ({s.id}) — OT: {otUsed.toFixed(1)}/{cap}h{notWilling?" [Not willing]":""}</option>;})}
                 </select>
               </div>
               <div><label style={{fontSize:"12px",color:C.textMid,display:"block",marginBottom:"3px"}}>Greenhouse:</label>
@@ -2206,16 +2329,27 @@ function OvertimePage({staff,ghList,activities,schedule,absences,overtimeEntries
             </tr></thead>
             <tbody>
               {overtimeEntries.map((e,i)=>(
-                <tr key={e.id} style={{background:e.source==="manual"?"#fdf4ff":i%2===0?C.light:C.white}}>
-                  <td style={{padding:"8px"}}><strong>{e.staffName}</strong><br/><span style={{fontFamily:"monospace",fontSize:"11px",color:C.textLight}}>{e.staffId}</span>{e.gmOverride&&<span style={{display:"block",fontSize:"10px",color:C.orange}}>⚠️ GM Override</span>}</td>
+                <tr key={e.id} style={{background:e.locked?"#f0fdf4":e.source==="manual"?"#fdf4ff":i%2===0?C.light:C.white}}>
+                  <td style={{padding:"8px"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:"6px"}}>
+                      {e.locked&&<span title="Locked" style={{fontSize:"13px"}}>🔒</span>}
+                      <div><strong>{e.staffName}</strong><br/><span style={{fontFamily:"monospace",fontSize:"11px",color:C.textLight}}>{e.staffId}</span></div>
+                    </div>
+                    {e.gmOverride&&<span style={{display:"block",fontSize:"10px",color:C.orange}}>⚠️ GM Override</span>}
+                  </td>
                   <td style={{padding:"8px"}}>{e.day}</td>
                   <td style={{padding:"8px"}}>{e.greenhouse}</td>
                   <td style={{padding:"8px"}}>{e.activity}</td>
-                  <td style={{padding:"8px",textAlign:"center"}}>{role==="gm"?<input type="number" min="0" max="24" value={e.hours} onChange={ev=>updateEntry(e.id,{hours:parseFloat(ev.target.value)||0})} style={{width:"55px",padding:"3px",border:`1px solid ${C.border}`,borderRadius:"4px",textAlign:"center",fontSize:"12px"}}/>:<span>{e.hours}h</span>}</td>
-                  <td style={{padding:"8px",textAlign:"center"}}>{role==="gm"?<input type="number" min="0" value={e.ratePerHour||""} onChange={ev=>updateEntry(e.id,{ratePerHour:parseFloat(ev.target.value)||null})} style={{width:"65px",padding:"3px",border:`1px solid ${C.border}`,borderRadius:"4px",textAlign:"center",fontSize:"12px"}} placeholder="—"/>:<span>{e.ratePerHour?`$${e.ratePerHour}`:"—"}</span>}</td>
+                  <td style={{padding:"8px",textAlign:"center"}}>{role==="gm"&&!e.locked?<input type="number" min="0" max="24" value={e.hours} onChange={ev=>updateEntry(e.id,{hours:parseFloat(ev.target.value)||0})} style={{width:"55px",padding:"3px",border:`1px solid ${C.border}`,borderRadius:"4px",textAlign:"center",fontSize:"12px"}}/>:<span>{e.hours}h</span>}</td>
+                  <td style={{padding:"8px",textAlign:"center"}}>{role==="gm"&&!e.locked?<input type="number" min="0" value={e.ratePerHour||""} onChange={ev=>updateEntry(e.id,{ratePerHour:parseFloat(ev.target.value)||null})} style={{width:"65px",padding:"3px",border:`1px solid ${C.border}`,borderRadius:"4px",textAlign:"center",fontSize:"12px"}} placeholder="—"/>:<span>{e.ratePerHour?`$${e.ratePerHour}`:"—"}</span>}</td>
                   <td style={{padding:"8px",textAlign:"center",fontWeight:"600",color:e.estimatedCost?C.navy:C.textLight}}>{e.estimatedCost?`$${e.estimatedCost.toFixed(2)}`:"—"}</td>
                   <td style={{padding:"8px",textAlign:"center"}}><span style={{background:e.source==="manual"?"#f0e6ff":"#e8f4fd",color:e.source==="manual"?C.purple:C.blue,padding:"2px 8px",borderRadius:"10px",fontSize:"11px",fontWeight:"600"}}>{e.source==="manual"?"Manual ★":"System"}</span></td>
-                  {role==="gm"&&<td style={{padding:"8px",textAlign:"center"}}><button onClick={()=>deleteEntry(e.id)} style={{...btn(false,C.red),padding:"4px 8px",fontSize:"11px"}}>🗑️</button></td>}
+                  {role==="gm"&&<td style={{padding:"8px",textAlign:"center"}}>
+                    <div style={{display:"flex",gap:"4px",justifyContent:"center"}}>
+                      <button onClick={()=>toggleLock(e.id)} title={e.locked?"Unlock to edit":"Lock to protect"} style={{...btn(e.locked,e.locked?C.green:C.textLight),padding:"4px 7px",fontSize:"11px"}}>{e.locked?"🔒":"🔓"}</button>
+                      <button onClick={()=>deleteEntry(e.id)} style={{...btn(false,C.red),padding:"4px 8px",fontSize:"11px"}}>🗑️</button>
+                    </div>
+                  </td>}
                 </tr>
               ))}
             </tbody>
@@ -2231,7 +2365,9 @@ function OvertimePage({staff,ghList,activities,schedule,absences,overtimeEntries
 // ═══════════════════════════════════════════════════════════════════════════════
 // QUARANTINE PANEL — with extend + expired history
 // ═══════════════════════════════════════════════════════════════════════════════
-function QuarantinePanel({staff,ghList,quarantine,setQuarantine,quarantineHistory,setQuarantineHistory,schedule,btn,inp,C,API,adelaideTime,fmtISOReadable,role}){
+const NON_DEFERRABLE_ACTS=["Picking","Harvesting"];
+
+function QuarantinePanel({staff,ghList,quarantine,setQuarantine,quarantineHistory,setQuarantineHistory,schedule,dailyAllocation,setDailyAllocation,confirmedWeeks,setConfirmedWeeks,wsHolidays,activities,addAuditEntry,btn,inp,C,API,adelaideTime,fmtISOReadable,role}){
   const [typeA_gh,setTypeA_gh]=useState("");
   const [typeA_days,setTypeA_days]=useState(7);
   const [typeA_reason,setTypeA_reason]=useState("");
@@ -2242,6 +2378,13 @@ function QuarantinePanel({staff,ghList,quarantine,setQuarantine,quarantineHistor
   const [showHistory,setShowHistory]=useState(false);
   const [extendId,setExtendId]=useState(null);
   const [extendDays,setExtendDays]=useState(7);
+  // Type C — Limited Activity GH Quarantine
+  const [typeC_gh,setTypeC_gh]=useState("");
+  const [typeC_days,setTypeC_days]=useState(7);
+  const [typeC_reason,setTypeC_reason]=useState("");
+  const [typeC_allowedActs,setTypeC_allowedActs]=useState([]);
+  const [typeC_staff,setTypeC_staff]=useState([]);
+  const [typeC_carry,setTypeC_carry]=useState(true);
 
   const ghNames=ghList.map(g=>g.name);
 
@@ -2301,12 +2444,94 @@ function QuarantinePanel({staff,ghList,quarantine,setQuarantine,quarantineHistor
     }catch(e){alert("Error: "+e.message);}
   };
 
+  const createTypeC=async()=>{
+    if(!typeC_gh)return alert("Please select a greenhouse.");
+    if(typeC_allowedActs.length===0)return alert("Select at least one allowed activity (others will be restricted).");
+    const autoStaff=typeC_staff.length>0?typeC_staff:getStaffInGH(typeC_gh);
+    const restrictedActs=activities.filter(a=>!typeC_allowedActs.includes(a));
+    try{
+      const res=await axios.post(`${API}/quarantine`,{
+        greenhouseId:typeC_gh,staffIds:autoStaff,
+        allowedGreenhouses:[typeC_gh],daysLocked:typeC_days,
+        reason:typeC_reason,startDate:new Date().toISOString(),
+        quarantineType:"C",
+        allowedActivities:typeC_allowedActs,
+        restrictedActivities:restrictedActs,
+        assignedStaff:autoStaff,
+        createdBy:"GM"
+      });
+      if(res.data.event){
+        const ev={...res.data.event,quarantineType:"C",allowedActivities:typeC_allowedActs,restrictedActivities:restrictedActs,assignedStaff:autoStaff};
+        setQuarantine([...quarantine,ev]);
+        // Carry-forward: find affected weeks in dailyAllocation and move restricted activity hours to next week
+        if(typeC_carry){
+          const ydpPlans=JSON.parse(localStorage.getItem("ydp_plans_v1")||"[]");
+          const lpData=JSON.parse(localStorage.getItem("labourPlanner_v1")||"{}");
+          const ghMap={};(lpData.greenhouses||[]).forEach(g=>{ghMap[g.id]=g.name;});
+          const ghIdForName=ghList.find(g=>g.name===typeC_gh)?.id||typeC_gh;
+          const affectedPlans=ydpPlans.filter(p=>p.ghId===ghIdForName);
+          const today=new Date();
+          let carryCount=0;
+          setDailyAllocation(prev=>{
+            const next={...prev};
+            affectedPlans.forEach(plan=>{
+              for(let wi=0;wi<plan.cycleWeeks;wi++){
+                const wStart=new Date(plan.startDate);wStart.setDate(wStart.getDate()+wi*7);
+                const wEnd=new Date(wStart);wEnd.setDate(wEnd.getDate()+6);
+                if(wEnd<today||wStart>new Date(today.getTime()+typeC_days*86400000))continue;
+                const key=`${plan.id}__w${wi}`;
+                const nextKey=`${plan.id}__w${wi+1}`;
+                const alloc=prev[key]||{};
+                const nextAlloc={...prev[nextKey]||{}};
+                restrictedActs.forEach(act=>{
+                  const isND=NON_DEFERRABLE_ACTS.some(nd=>act.toLowerCase().includes(nd.toLowerCase()));
+                  if(isND)return; // lost production — don't carry forward
+                  const actH=Object.values(alloc[act]||{}).reduce((s,v)=>s+(parseFloat(v)||0),0);
+                  if(!actH)return;
+                  // Zero out current week restricted activity
+                  const curAct={...alloc[act]||{}};
+                  Object.keys(curAct).forEach(d=>{curAct[d]=0;});
+                  if(!next[key])next[key]={...alloc};
+                  next[key]={...next[key],[act]:curAct};
+                  // Add to next week (divide across Mon-Fri)
+                  if(wi+1<plan.cycleWeeks){
+                    const days=["Mon","Tue","Wed","Thu","Fri"];
+                    const perDay=Math.round(actH/days.length*10)/10;
+                    const existing=nextAlloc[act]||{};
+                    days.forEach((d,i)=>{existing[d]=(parseFloat(existing[d])||0)+(i===days.length-1?actH-perDay*(days.length-1):perDay);});
+                    nextAlloc[act]=existing;
+                    next[nextKey]=nextAlloc;
+                    // Unconfirm next week so it can be reviewed
+                    setConfirmedWeeks(prev2=>{const n={...prev2};delete n[nextKey];return n;});
+                    carryCount++;
+                  }
+                });
+                // Unconfirm current week
+                setConfirmedWeeks(prev2=>{const n={...prev2};delete n[key];return n;});
+              }
+            });
+            return next;
+          });
+          if(carryCount>0&&addAuditEntry)addAuditEntry("quarantine",`Type C: ${typeC_gh} limited — ${restrictedActs.filter(a=>!NON_DEFERRABLE_ACTS.some(nd=>a.toLowerCase().includes(nd.toLowerCase()))).length} deferrable activities carried forward`,{gh:typeC_gh});
+        }
+        if(addAuditEntry)addAuditEntry("quarantine",`Type C quarantine: ${typeC_gh} — limited activity (${typeC_allowedActs.join(", ")} allowed)`,{gh:typeC_gh});
+        setTypeC_gh("");setTypeC_reason("");setTypeC_days(7);setTypeC_allowedActs([]);setTypeC_staff([]);
+        const lostActs=restrictedActs.filter(a=>NON_DEFERRABLE_ACTS.some(nd=>a.toLowerCase().includes(nd.toLowerCase())));
+        const deferActs=restrictedActs.filter(a=>!NON_DEFERRABLE_ACTS.some(nd=>a.toLowerCase().includes(nd.toLowerCase())));
+        alert(`Type C Quarantine created for ${typeC_gh}.\nAllowed: ${typeC_allowedActs.join(", ")}\n${deferActs.length>0?`Deferred to next week: ${deferActs.join(", ")}\n`:""}${lostActs.length>0?`⚠️ Lost production (cannot defer): ${lostActs.join(", ")}`:""}`);
+      }
+    }catch(e){alert("Error: "+e.message);}
+  };
+
   const removeEvent=async(id)=>{
     if(!window.confirm("Remove this quarantine event early?"))return;
+    const removed=quarantine.find(e=>e.id===id);
     try{
       await axios.delete(`${API}/quarantine/${id}`);
-      const removed=quarantine.find(e=>e.id===id);
-      if(removed)setQuarantineHistory([{...removed,closedEarly:true,closedAt:new Date().toISOString()},...quarantineHistory]);
+      if(removed){
+        setQuarantineHistory([{...removed,closedEarly:true,closedAt:new Date().toISOString()},...quarantineHistory]);
+        if(addAuditEntry)addAuditEntry("quarantine",`Quarantine closed early: ${removed.greenhouseId} (Type ${removed.quarantineType})`,{gh:removed.greenhouseId});
+      }
       setQuarantine(quarantine.filter(e=>e.id!==id));
     }catch(e){alert("Error: "+e.message);}
   };
@@ -2334,7 +2559,7 @@ function QuarantinePanel({staff,ghList,quarantine,setQuarantine,quarantineHistor
         Multiple quarantine orders can run concurrently. Each has its own countdown. Use Extend before expiry to continue — otherwise it expires automatically and moves to history.
       </p>
 
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"20px",marginBottom:"24px"}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"20px",marginBottom:"24px"}}>
         {/* TYPE A */}
         <div style={{border:`2px solid ${C.red}`,borderRadius:"10px",padding:"16px",background:"#fff8f8"}}>
           <h4 style={{color:C.red,margin:"0 0 4px 0",fontSize:"14px"}}>🔴 Type A — Greenhouse Quarantine</h4>
@@ -2393,6 +2618,61 @@ function QuarantinePanel({staff,ghList,quarantine,setQuarantine,quarantineHistor
           </div>
           <button onClick={createTypeB} style={{...btn(false,C.purple),width:"100%",padding:"10px"}}>🟣 Create Type B Quarantine</button>
         </div>
+
+        {/* TYPE C */}
+        <div style={{border:`2px solid ${C.orange}`,borderRadius:"10px",padding:"16px",background:"#fffbf5"}}>
+          <h4 style={{color:C.orange,margin:"0 0 4px 0",fontSize:"14px"}}>🟠 Type C — Limited Activity</h4>
+          <p style={{color:C.textMid,fontSize:"12px",marginBottom:"14px"}}>Greenhouse remains open but only certain activities are permitted. Restricted activities are automatically carried forward to next week (except non-deferrable ones like Picking/Harvesting which are flagged as lost).</p>
+          <div style={{marginBottom:"10px"}}>
+            <label style={{display:"block",fontSize:"12px",fontWeight:"600",color:C.navy,marginBottom:"4px"}}>Select Greenhouse:</label>
+            <select value={typeC_gh} onChange={e=>setTypeC_gh(e.target.value)} style={{...inp,width:"100%"}}>
+              <option value="">— Select greenhouse —</option>{ghNames.map(g=><option key={g} value={g}>{g}</option>)}
+            </select>
+          </div>
+          <div style={{marginBottom:"10px"}}>
+            <label style={{display:"block",fontSize:"12px",fontWeight:"600",color:C.navy,marginBottom:"4px"}}>Allowed Activities (others will be restricted):</label>
+            <div style={{maxHeight:"140px",overflowY:"auto",border:`1px solid ${C.border}`,borderRadius:"6px",padding:"6px",background:"white"}}>
+              {activities.map(a=>(
+                <label key={a} style={{display:"flex",alignItems:"center",gap:"8px",padding:"3px 6px",cursor:"pointer",borderRadius:"4px",background:typeC_allowedActs.includes(a)?"#fff3e0":"transparent"}}>
+                  <input type="checkbox" checked={typeC_allowedActs.includes(a)} onChange={e=>setTypeC_allowedActs(e.target.checked?[...typeC_allowedActs,a]:typeC_allowedActs.filter(x=>x!==a))} style={{accentColor:C.orange}}/>
+                  <span style={{fontSize:"12px"}}>{a}</span>
+                </label>
+              ))}
+            </div>
+            {typeC_allowedActs.length>0&&<p style={{color:C.orange,fontSize:"11px",marginTop:"4px",fontWeight:"600"}}>{typeC_allowedActs.length} allowed / {activities.length-typeC_allowedActs.length} restricted</p>}
+          </div>
+          <div style={{marginBottom:"10px"}}>
+            <label style={{display:"block",fontSize:"12px",fontWeight:"600",color:C.navy,marginBottom:"4px"}}>Assign Staff (optional — defaults to GH staff):</label>
+            <div style={{maxHeight:"120px",overflowY:"auto",border:`1px solid ${C.border}`,borderRadius:"6px",padding:"6px",background:"white"}}>
+              {staff.map(s=>(
+                <label key={s.id} style={{display:"flex",alignItems:"center",gap:"8px",padding:"3px 6px",cursor:"pointer",borderRadius:"4px",background:typeC_staff.includes(s.id)?"#fff3e0":"transparent"}}>
+                  <input type="checkbox" checked={typeC_staff.includes(s.id)} onChange={e=>setTypeC_staff(e.target.checked?[...typeC_staff,s.id]:typeC_staff.filter(x=>x!==s.id))} style={{accentColor:C.orange}}/>
+                  <span style={{fontFamily:"monospace",fontSize:"11px",color:C.textLight,minWidth:"40px"}}>{s.id}</span>
+                  <span style={{fontSize:"12px"}}>{s.name}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+          <div style={{display:"flex",gap:"10px",marginBottom:"10px"}}>
+            <div><label style={{display:"block",fontSize:"12px",fontWeight:"600",color:C.navy,marginBottom:"4px"}}>Duration (days):</label><input type="number" min="1" max="90" value={typeC_days} onChange={e=>setTypeC_days(parseInt(e.target.value)||7)} style={{...inp,width:"80px"}}/></div>
+          </div>
+          <div style={{marginBottom:"10px"}}>
+            <label style={{display:"flex",alignItems:"center",gap:"8px",cursor:"pointer",fontSize:"12px",fontWeight:"600",color:C.navy}}>
+              <input type="checkbox" checked={typeC_carry} onChange={e=>setTypeC_carry(e.target.checked)} style={{accentColor:C.orange}}/>
+              Auto-carry deferrable activities to next week
+            </label>
+          </div>
+          <div style={{marginBottom:"12px"}}>
+            <label style={{display:"block",fontSize:"12px",fontWeight:"600",color:C.navy,marginBottom:"4px"}}>Reason (optional):</label>
+            <input value={typeC_reason} onChange={e=>setTypeC_reason(e.target.value)} style={{...inp,width:"100%"}} placeholder="e.g. Pest treatment in progress"/>
+          </div>
+          {typeC_allowedActs.length>0&&activities.length>typeC_allowedActs.length&&(
+            <div style={{background:"#fff3e0",borderRadius:"6px",padding:"8px",marginBottom:"10px",fontSize:"11px",color:C.orange}}>
+              ⚠️ Restricted: {activities.filter(a=>!typeC_allowedActs.includes(a)).map(a=>{const isND=NON_DEFERRABLE_ACTS.some(nd=>a.toLowerCase().includes(nd.toLowerCase()));return isND?<span key={a} style={{color:C.red,fontWeight:"700"}}>{a} (lost) </span>:<span key={a}>{a} (deferred) </span>;}) }
+            </div>
+          )}
+          <button onClick={createTypeC} style={{...btn(false,C.orange),width:"100%",padding:"10px"}}>🟠 Create Type C Quarantine</button>
+        </div>
       </div>
 
       {/* Active events */}
@@ -2401,23 +2681,28 @@ function QuarantinePanel({staff,ghList,quarantine,setQuarantine,quarantineHistor
           <h4 style={{color:C.navy,marginBottom:"12px"}}>Active Quarantine Orders ({quarantine.length})</h4>
           {quarantine.map(ev=>{
             const isTypeA=ev.quarantineType==="A"||!ev.quarantineType;
-            const color=isTypeA?C.red:C.purple;
+            const isTypeC=ev.quarantineType==="C";
+            const color=isTypeA?C.red:isTypeC?C.orange:C.purple;
+            const bgColor=isTypeA?"#fff8f8":isTypeC?"#fffbf5":"#fdf8ff";
+            const typeLabel=isTypeA?"Type A — GH Lock":isTypeC?"Type C — Limited Activity":"Type B — Individual";
             const staffNames=ev.staffIds?.map(id=>staff.find(s=>s.id===id)?.name||id)||[];
             const daysLeft=getDaysRemaining(ev);
             const isRedundant=checkRedundant(ev);
             const totalDays=(ev.daysLocked||7)+(ev.extensionDays||0);
             return(
-              <div key={ev.id} style={{border:`1px solid ${color}33`,borderLeft:`4px solid ${color}`,borderRadius:"8px",padding:"14px",marginBottom:"10px",background:isTypeA?"#fff8f8":"#fdf8ff"}}>
+              <div key={ev.id} style={{border:`1px solid ${color}33`,borderLeft:`4px solid ${color}`,borderRadius:"8px",padding:"14px",marginBottom:"10px",background:bgColor}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:"12px"}}>
                   <div style={{flex:1}}>
                     <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"6px",flexWrap:"wrap"}}>
-                      <span style={{background:color,color:"white",padding:"2px 10px",borderRadius:"10px",fontSize:"11px",fontWeight:"700"}}>{isTypeA?"Type A — GH Lock":"Type B — Individual"}</span>
+                      <span style={{background:color,color:"white",padding:"2px 10px",borderRadius:"10px",fontSize:"11px",fontWeight:"700"}}>{typeLabel}</span>
                       <strong style={{color,fontSize:"14px"}}>{ev.greenhouseId}</strong>
                       <span style={{fontSize:"13px",color:C.textMid}}>{totalDays} days total {ev.extensionDays>0?`(+${ev.extensionDays} extended)`:""}</span>
                       <span style={{background:daysLeft<=2?"#ffe5e5":daysLeft<=5?"#fff8ee":"#eafaf1",color:daysLeft<=2?C.red:daysLeft<=5?C.orange:C.green,padding:"2px 8px",borderRadius:"10px",fontSize:"11px",fontWeight:"700"}}>{daysLeft}d left</span>
                       {isRedundant&&<span style={{background:"#fff8ee",color:C.gold,padding:"2px 8px",borderRadius:"10px",fontSize:"11px"}}>⚠️ Redundant with Type A</span>}
                     </div>
                     <div style={{fontSize:"12px",color:C.textMid,marginBottom:"4px"}}><strong>{staffNames.length} staff:</strong> {staffNames.length>0?staffNames.join(", "):"None"}</div>
+                    {isTypeC&&ev.allowedActivities&&<div style={{fontSize:"11px",color:C.orange,marginBottom:"2px"}}>✅ Allowed: {ev.allowedActivities.join(", ")}</div>}
+                    {isTypeC&&ev.restrictedActivities?.length>0&&<div style={{fontSize:"11px",color:C.red,marginBottom:"2px"}}>🚫 Restricted: {ev.restrictedActivities.join(", ")}</div>}
                     {ev.reason&&<div style={{fontSize:"12px",color:C.textLight}}>📝 {ev.reason}</div>}
                     {ev.extensionDays>0&&<div style={{fontSize:"11px",color:C.teal,marginTop:"2px"}}>⏱️ Extended {ev.extensionDays} days — last extended: {fmtISOReadable(ev.lastExtendedAt)}</div>}
                     <div style={{fontSize:"11px",color:C.textLight,marginTop:"4px"}}>Created: {fmtISOReadable(ev.createdAt)}</div>
@@ -2457,12 +2742,14 @@ function QuarantinePanel({staff,ghList,quarantine,setQuarantine,quarantineHistor
             <div style={{background:C.light,borderRadius:"8px",padding:"14px"}}>
               {quarantineHistory.map((ev,i)=>{
                 const isTypeA=ev.quarantineType==="A"||!ev.quarantineType;
-                const color=isTypeA?"#e74c3c":"#8e44ad";
+                const isTypeC=ev.quarantineType==="C";
+                const color=isTypeA?"#e74c3c":isTypeC?C.orange:"#8e44ad";
+                const histTypeLabel=isTypeA?"Type A":isTypeC?"Type C":"Type B";
                 const staffNames=ev.staffIds?.map(id=>staff.find(s=>s.id===id)?.name||id)||[];
                 return(
                   <div key={ev.id||i} style={{borderLeft:`3px solid ${color}88`,padding:"8px 12px",marginBottom:"8px",background:"white",borderRadius:"4px",opacity:0.75}}>
                     <div style={{display:"flex",gap:"8px",alignItems:"center",flexWrap:"wrap",marginBottom:"4px"}}>
-                      <span style={{background:`${color}22`,color,padding:"2px 8px",borderRadius:"8px",fontSize:"11px",fontWeight:"700"}}>{isTypeA?"Type A":"Type B"}</span>
+                      <span style={{background:`${color}22`,color,padding:"2px 8px",borderRadius:"8px",fontSize:"11px",fontWeight:"700"}}>{histTypeLabel}</span>
                       <span style={{fontWeight:"700",color:C.textDark,fontSize:"13px"}}>{ev.greenhouseId}</span>
                       {ev.closedEarly&&<span style={{background:"#fff8ee",color:C.orange,padding:"2px 8px",borderRadius:"8px",fontSize:"11px"}}>Closed early</span>}
                     </div>
@@ -2756,6 +3043,12 @@ function StaffProfilePopup({selectedStaff,setSelectedStaff,staff,setStaff,activi
             <div style={{display:"flex",alignItems:"center",gap:"6px"}}>
               <label style={{fontSize:"13px",color:C.textMid}}>OT limit/week:</label>
               <input type="number" min="0" max="80" value={selectedStaff.overtimeLimit??30} onChange={e=>update({overtimeLimit:parseInt(e.target.value)||0})} style={{...inp,width:"55px",textAlign:"center"}}/>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:"6px"}}>
+              <label style={{display:"flex",alignItems:"center",gap:"6px",cursor:"pointer",fontSize:"13px",color:C.textMid}}>
+                <input type="checkbox" checked={selectedStaff.otWilling!==false} onChange={e=>update({otWilling:e.target.checked})} style={{accentColor:C.orange,width:16,height:16}}/>
+                OT Willing
+              </label>
             </div>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:"6px"}}>
