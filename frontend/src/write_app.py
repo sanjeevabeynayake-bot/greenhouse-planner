@@ -1909,7 +1909,12 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
   React.useEffect(()=>{
     if(!selPlan||!allocKey||isConfirmed)return;
     const{key,result}=allocPlanWeek(selPlan,selWeekIdx);
-    if(Object.keys(result).length>0)setDailyAllocation(prev=>({...prev,[key]:result}));
+    if(Object.keys(result).length>0){
+      setDailyAllocation(prev=>({...prev,[key]:result}));
+    }else{
+      // plan.grid is null or empty — clear stale allocation so display shows empty, not old wrong data
+      setDailyAllocation(prev=>{const n={...prev};delete n[key];return n;});
+    }
   },[allocKey,demandVersion]);
 
   // Daily allocation accessors
@@ -2151,6 +2156,17 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
                 )}
 
                 {selPlan&&(<>
+
+                  {/* No-grid warning — plan exists but Recalculate never clicked in YDP */}
+                  {!selPlan.grid&&(
+                    <div style={{background:"#fef3c7",border:"1px solid #fcd34d",borderRadius:"8px",padding:"12px 16px",margin:"12px",display:"flex",alignItems:"flex-start",gap:"10px"}}>
+                      <span style={{fontSize:"20px"}}>⚠️</span>
+                      <div>
+                        <div style={{fontWeight:"700",color:"#92400e",fontSize:"13px",marginBottom:"4px"}}>This plan has no demand grid yet</div>
+                        <div style={{color:"#78350f",fontSize:"12px"}}>Go to <strong>Labour Planner → Yearly Demand Planner</strong>, select this plan, click <strong>↻ Recalculate from master</strong>, then <strong>▶ Populate to Scheduler</strong>. The demand tab will update automatically.</div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Week tabs */}
                   <div style={{background:"white",borderBottom:`1px solid ${C.border}`,padding:"8px 14px",display:"flex",gap:"6px",alignItems:"center",overflowX:"auto"}}>
