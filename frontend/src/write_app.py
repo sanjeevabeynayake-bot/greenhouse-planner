@@ -1905,12 +1905,12 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
     alert(`✅ Demand recalculated — ${Object.keys(updates).length} week(s) reset.\n\nAll unconfirmed weeks now use Mon–Fri only with correct day allocations.`);
   };
 
-  // Always recompute unconfirmed weeks when navigating — never show stale data
+  // Recompute unconfirmed week whenever plan data or standards change
   React.useEffect(()=>{
     if(!selPlan||!allocKey||isConfirmed)return;
     const{key,result}=allocPlanWeek(selPlan,selWeekIdx);
     if(Object.keys(result).length>0)setDailyAllocation(prev=>({...prev,[key]:result}));
-  },[allocKey]);
+  },[allocKey,demandVersion]);
 
   // Daily allocation accessors
   const getAllocVal=(act,day)=>{const v=weekAlloc[act]?.[day];return v!=null?v:"";};
