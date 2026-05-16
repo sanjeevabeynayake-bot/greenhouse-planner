@@ -1905,11 +1905,9 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
     alert(`✅ Demand recalculated — ${Object.keys(updates).length} week(s) reset.\n\nAll unconfirmed weeks now use Mon–Fri only with correct day allocations.`);
   };
 
-  // Auto-allocate current week when it has no data yet
+  // Always recompute unconfirmed weeks when navigating — never show stale data
   React.useEffect(()=>{
     if(!selPlan||!allocKey||isConfirmed)return;
-    const existing=dailyAllocation[allocKey];
-    if(existing&&Object.keys(existing).length>0)return;
     const{key,result}=allocPlanWeek(selPlan,selWeekIdx);
     if(Object.keys(result).length>0)setDailyAllocation(prev=>({...prev,[key]:result}));
   },[allocKey]);
@@ -2102,11 +2100,6 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
       {/* ══ WEEKLY PLANNER ══ */}
       {demandSubTab==="weekly"&&(
         <div>
-          {/* Reset banner — always visible so user can fix stale data */}
-          <div style={{marginBottom:"12px",background:"#fef3c7",border:"1px solid #fcd34d",borderRadius:"8px",padding:"10px 16px",display:"flex",alignItems:"center",gap:"14px",flexWrap:"wrap"}}>
-            <span style={{flex:1,fontSize:"12px",color:"#92400e",fontWeight:500}}>⚠️ <strong>If demand hours look wrong</strong> (wrong totals, weekend allocations, or not matching YDP) — click Reset to wipe stale data and recompute correctly.</span>
-            <button onClick={resetAllDemand} style={{...btn(true,"#d97706"),padding:"10px 22px",fontSize:"13px",fontWeight:"800",boxShadow:"0 0 0 3px #fcd34d88",whiteSpace:"nowrap"}}>↺ Reset & Recalculate All Demand</button>
-          </div>
           {/* Deadline banner */}
           {(isAmber||isRed)&&(
             <div style={{background:isRed?"#fee2e2":"#fef3c7",border:`1px solid ${isRed?"#fca5a5":"#fcd34d"}`,borderRadius:"8px",padding:"10px 16px",marginBottom:"14px",display:"flex",alignItems:"center",gap:"10px"}}>
