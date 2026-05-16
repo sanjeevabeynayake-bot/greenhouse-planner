@@ -1690,9 +1690,10 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
   const getCell=(cell)=>cell?.isManual?(parseFloat(cell.manualHours)||0):(parseFloat(cell?.hours)||0);
 
   const defaultDaysFor=(n)=>{
-    if(n===1)return Math.random()<0.5?["Tuesday"]:["Thursday"];
-    if(n===2)return["Monday","Wednesday"];
-    if(n===3)return["Monday","Thursday","Friday"];
+    if(n===1)return["Tuesday"];
+    if(n===2)return["Monday","Thursday"];
+    if(n===3)return["Monday","Wednesday","Friday"];
+    if(n===4)return["Monday","Tuesday","Thursday","Friday"];
     return FULL_DAYS.slice(0,Math.min(n,7));
   };
 
@@ -1720,13 +1721,15 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
   },[stdCropList.length]);
 
   // Auto-apply standards when switching to a crop type that has never been applied
+  // Wait for LP data to load before applying (lpLoaded prevents wrong defaults on cold open)
+  const lpLoaded=!!(lpData.cropCycles?.length>0);
   React.useEffect(()=>{
-    if(!selStdCropName)return;
+    if(!selStdCropName||!lpLoaded)return;
     const plans=ydpPlans.filter(p=>p.cropName===selStdCropName);
     const hasAnyAlloc=plans.some(plan=>Array.from({length:plan.cycleWeeks||0},(_,wi)=>`${plan.id}__w${wi}`).some(k=>dailyAllocation[k]&&Object.keys(dailyAllocation[k]).length>0));
     if(!hasAnyAlloc&&plans.length>0){recalcPlanWeeks(selStdCropName);}
     setStdsDirty(false);
-  },[selStdCropName]);
+  },[selStdCropName,lpLoaded]);
 
   // Auto-select first GH on load (weekly planner)
   React.useEffect(()=>{
