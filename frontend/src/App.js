@@ -1694,7 +1694,7 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
     if(n===2)return["Monday","Thursday"];
     if(n===3)return["Monday","Wednesday","Friday"];
     if(n===4)return["Monday","Tuesday","Thursday","Friday"];
-    return FULL_DAYS.slice(0,Math.min(n,7));
+    return ["Monday","Tuesday","Wednesday","Thursday","Friday"].slice(0,Math.min(n,5));
   };
 
   // Load YDP plans, GH name map, LP data from localStorage — re-read when demandVersion changes (cloud sync)
@@ -1838,15 +1838,18 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
       if(!total||total===0)return;
       const std=carStandards[plan.cropName]?.[act]||getOrInitStd(plan,act);
       let workDays;
+      const WK_FULL=["Monday","Tuesday","Wednesday","Thursday","Friday"];
+      const WK_SHORT=["Mon","Tue","Wed","Thu","Fri"];
       if(std.days&&std.days.length>0){
         if(std.mode==="alt"){
-          workDays=std.days.filter(fd=>{const di=FULL_DAYS.indexOf(fd);return di<0||!holDates.has(addD(weekStart,di));}).map(fd=>DAY_SHORT[fd]||fd);
+          workDays=std.days.filter(fd=>{const di=FULL_DAYS.indexOf(fd);return di>=0&&di<=4&&!holDates.has(addD(weekStart,di));}).map(fd=>DAY_SHORT[fd]||fd);
+          if(!workDays.length)workDays=WK_SHORT.filter((_,i)=>!holDates.has(addD(weekStart,i)));
         }else{
           const fd=std.days[0];const di=FULL_DAYS.indexOf(fd);
-          if(di>=0&&!holDates.has(addD(weekStart,di))){workDays=[DAY_SHORT[fd]||fd];}
-          else{workDays=DAYS.filter((_,i)=>!holDates.has(addD(weekStart,i)));}
+          if(di>=0&&di<=4&&!holDates.has(addD(weekStart,di))){workDays=[DAY_SHORT[fd]||fd];}
+          else{const avail=WK_SHORT.filter((_,i)=>!holDates.has(addD(weekStart,i)));workDays=avail.length?[avail[0]]:[];}
         }
-      }else{workDays=DAYS.filter((_,i)=>!holDates.has(addD(weekStart,i)));}
+      }else{workDays=WK_SHORT.filter((_,i)=>!holDates.has(addD(weekStart,i)));}
       if(!workDays.length)return;
       let rem=total;const alloc={};
       workDays.forEach((d,pos)=>{

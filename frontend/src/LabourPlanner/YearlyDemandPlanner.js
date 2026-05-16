@@ -420,7 +420,10 @@ function CreatePlanForm({ gh, zone, plans, cropCycles, onCreated, onCancel }) {
 function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinationData, pickingData, setPlans, today }) {
   const masterData = cropMasterData.find(d => d.cropId === plan.cropId);
   const [contextMenu, setContextMenu] = useState(null);
-  const [dirty, setDirty] = useState(false); // true after manual edits; cleared on Recalculate
+  const [dirty, setDirty] = useState(false);
+  const [editingDates, setEditingDates] = useState(false);
+  const [editStart, setEditStart] = useState(plan.startDate);
+  const [editWeeks, setEditWeeks] = useState(String(plan.cycleWeeks));
 
   const sqmFromGH = plan.zone === "A" ? (gh?.zoneA?.sqm || "")
     : plan.zone === "B" ? (gh?.zoneB?.sqm || "")
@@ -519,6 +522,16 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinatio
     }));
   };
 
+  const saveDates = () => {
+    const newWeeks = Math.max(1, parseInt(editWeeks) || plan.cycleWeeks);
+    setPlans(prev => prev.map(p => p.id !== plan.id ? p : {
+      ...p, startDate: editStart, cycleWeeks: newWeeks,
+      auditLog: [...(p.auditLog || []), { action: "dates-edited", at: new Date().toISOString() }],
+    }));
+    setEditingDates(false);
+    setDirty(false);
+  };
+
   const doRecalculate = () => {
     const newGrid = buildGrid(plan, {
       cropCycles, cropMasterData,
@@ -530,17 +543,11 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinatio
   };
 
   const doPopulate = () => {
-    if (dirty) { alert("Please click Recalculate first to refresh the grid before populating."); return; }
-    const newGrid = buildGrid(plan, {
-      cropCycles, cropMasterData,
-      greenhouses: gh ? [gh] : [],
-      pollinationData, pickingData, activities,
-    });
-    const updatedPlan = { ...plan, grid: newGrid, sentToScheduler: true, auditLog: [...(plan.auditLog || []), { action: "populated", at: new Date().toISOString() }] };
+    if (!plan.grid) { alert("Please click Recalculate first to build the grid before populating."); return; }
+    const updatedPlan = { ...plan, sentToScheduler: true, auditLog: [...(plan.auditLog || []), { action: "populated", at: new Date().toISOString() }] };
     setPlans(prev => prev.map(p => p.id === plan.id ? updatedPlan : p));
-    // Write a populate timestamp so the Demand tab can detect the update
     localStorage.setItem("ydp_last_populated_v1", JSON.stringify({ planId: plan.id, ts: new Date().toISOString() }));
-    alert(`✅ "${plan.cropName}" populated to Demand scheduler.\n\nGo to Weekly Scheduler → Demand tab. If data doesn't appear, navigate away and back to refresh.`);
+    alert(`✅ "${plan.cropName}" populated to Demand scheduler.\n\nGo to Weekly Scheduler → Demand tab.`);
   };
 
   // Dynamic totals — respects manual overrides
@@ -610,9 +617,28 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinatio
           <div style={{ fontSize: 17, fontWeight: 700, color: LP.forest, fontFamily: "'Palatino Linotype', Georgia, serif", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {gh?.name}{zoneLbl} — {plan.cropName}
           </div>
-          <div style={{ fontSize: 11, color: LP.textLight, marginTop: 2 }}>
-            {fmtDate(parseDate(plan.startDate))} → {fmtDate(planEnd(plan))} · {plan.cycleWeeks} weeks
-          </div>
+          {!editingDates ? (
+            <div style={{ fontSize: 11, color: LP.textLight, marginTop: 3, display: "flex", alignItems: "center", gap: 6 }}>
+              {fmtDate(parseDate(plan.startDate))} → {fmtDate(planEnd(plan))} · {plan.cycleWeeks} weeks
+              <button onClick={() => { setEditStart(plan.startDate); setEditWeeks(String(plan.cycleWeeks)); setEditingDates(true); }}
+                style={{ background: "none", border: "none", cursor: "pointer", color: LP.mid, fontSize: 10, padding: "0 4px", textDecoration: "underline" }}>
+                ✏ Edit dates
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6, flexWrap: "wrap" }}>
+              <label style={{ fontSize: 11, color: LP.textDark }}>Start:
+                <input type="date" value={editStart} onChange={e => setEditStart(e.target.value)}
+                  style={{ marginLeft: 4, border: `1px solid ${LP.border}`, borderRadius: 4, padding: "2px 6px", fontSize: 11 }} />
+              </label>
+              <label style={{ fontSize: 11, color: LP.textDark }}>Weeks:
+                <input type="number" min="1" max="52" value={editWeeks} onChange={e => setEditWeeks(e.target.value)}
+                  style={{ marginLeft: 4, width: 52, border: `1px solid ${LP.border}`, borderRadius: 4, padding: "2px 6px", fontSize: 11 }} />
+              </label>
+              <button onClick={saveDates} style={{ ...lpBtn(true, LP.forest), padding: "4px 12px", fontSize: 11, minHeight: 28 }}>Save</button>
+              <button onClick={() => setEditingDates(false)} style={{ ...lpBtn(false, LP.mid), padding: "4px 10px", fontSize: 11, minHeight: 28 }}>Cancel</button>
+            </div>
+          )}
         </div>
         <button onClick={handleResetAll}
           style={{ ...lpBtn(false, LP.mid), padding: "8px 16px", minHeight: 44 }}>
@@ -620,17 +646,16 @@ function PlanView({ plan, gh, cropCycles, cropMasterData, activities, pollinatio
         </button>
         <button onClick={doRecalculate}
           style={{ ...lpBtn(false, LP.mid), padding: "8px 16px", minHeight: 44 }}>
-          ↻ Recalculate
+          ↻ Recalculate from master
         </button>
         {dirty && (
-          <div style={{ background: LP.amberLight, border: `1px solid ${LP.amber}`, borderRadius: 8, padding: "6px 12px", fontSize: 11, color: LP.amber, fontWeight: 700 }}>
-            ⚠️ Manual edits pending — Recalculate before populating
+          <div style={{ background: LP.amberLight, border: `1px solid ${LP.amber}`, borderRadius: 8, padding: "6px 12px", fontSize: 11, color: LP.amber, fontWeight: 600 }}>
+            ✏️ Manual edits active — will populate as-is
           </div>
         )}
         <button onClick={doPopulate}
-          disabled={dirty}
-          title={dirty ? "Recalculate first to refresh the grid" : "Populate this plan to the Weekly Scheduler demand tab"}
-          style={{ ...lpBtn(!dirty, LP.forest), padding: "8px 18px", minHeight: 44, opacity: dirty ? 0.38 : 1, cursor: dirty ? "not-allowed" : "pointer" }}>
+          title="Populate this plan to the Weekly Scheduler demand tab"
+          style={{ ...lpBtn(true, LP.forest), padding: "8px 18px", minHeight: 44 }}>
           ▶ Populate to Scheduler
         </button>
       </div>
