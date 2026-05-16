@@ -45,6 +45,7 @@ export default function App() {
   const [clusters,setClusters]=useState([]);
   const [clusterTransitions,setClusterTransitions]=useState({});
   const [selectedStaff,setSelectedStaff]=useState(null);
+  const [masterDefaults,setMasterDefaults]=useState({hoursPerDay:7,overtimeLimit:30});
   const [saved,setSaved]=useState(false);
   const [loading,setLoading]=useState(true);
   const [generating,setGenerating]=useState(false);
@@ -729,6 +730,38 @@ export default function App() {
         {page==="edit"&&(
           <div>
             <h2 style={{color:C.navy,marginBottom:"16px"}}>✏️ Edit Master Data</h2>
+
+            {/* ── Master Staff Defaults ── */}
+            <div style={{...card,marginBottom:"18px",borderTop:`4px solid ${C.green}`,background:"#f0fff4"}}>
+              <h3 style={{color:C.navy,marginBottom:"4px"}}>👥 Master Staff Defaults</h3>
+              <p style={{fontSize:"12px",color:C.textLight,marginBottom:"14px"}}>Set defaults for all staff. Click "Apply to All" to push these values to every staff member (individual overrides remain possible).</p>
+              <div style={{display:"flex",gap:"20px",alignItems:"flex-end",flexWrap:"wrap"}}>
+                <div>
+                  <label style={{fontSize:"12px",color:C.textMid,display:"block",marginBottom:"4px"}}>Max daily hours (all staff)</label>
+                  <input type="number" min="1" max="16" value={masterDefaults.hoursPerDay}
+                    onChange={e=>setMasterDefaults(p=>({...p,hoursPerDay:parseInt(e.target.value)||7}))}
+                    style={{...inp,width:"70px",textAlign:"center",fontSize:"15px",fontWeight:"700"}}/>
+                </div>
+                <div>
+                  <label style={{fontSize:"12px",color:C.textMid,display:"block",marginBottom:"4px"}}>Max overtime / week (all staff)</label>
+                  <input type="number" min="0" max="80" value={masterDefaults.overtimeLimit}
+                    onChange={e=>setMasterDefaults(p=>({...p,overtimeLimit:parseInt(e.target.value)||30}))}
+                    style={{...inp,width:"70px",textAlign:"center",fontSize:"15px",fontWeight:"700"}}/>
+                </div>
+                <button onClick={()=>{
+                  setStaff(prev=>prev.map(s=>({
+                    ...s,
+                    hoursPerDay:masterDefaults.hoursPerDay,
+                    overtimeLimit:masterDefaults.overtimeLimit,
+                    dayHours:{Monday:masterDefaults.hoursPerDay,Tuesday:masterDefaults.hoursPerDay,Wednesday:masterDefaults.hoursPerDay,Thursday:masterDefaults.hoursPerDay,Friday:masterDefaults.hoursPerDay,Saturday:0,Sunday:0},
+                  })));
+                  setBackupReminder(true);
+                }} style={{...btn(false,C.green),alignSelf:"flex-end"}}>
+                  ✓ Apply to All Staff
+                </button>
+              </div>
+            </div>
+
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"18px"}}>
               <div style={card}>
                 <h3 style={{color:C.navy,marginBottom:"6px"}}>🏗️ Greenhouses ({ghList.length})</h3>
@@ -747,14 +780,26 @@ export default function App() {
                 <div style={{maxHeight:"200px",overflowY:"auto",marginBottom:"10px"}}>{activities.map((act,i)=><div key={i} style={{display:"flex",gap:"8px",marginBottom:"6px"}}><input value={act} onChange={e=>{const a=[...activities];a[i]=e.target.value;setActivities(a);}} style={{...inp,flex:1}}/><button onClick={()=>setActivities(activities.filter((_,j)=>j!==i))} style={btn(false,C.red)}>✕</button></div>)}</div>
                 <button onClick={()=>setActivities([...activities,"New Activity"])} style={btn(false,C.green)}>+ Add Activity</button>
               </div>
-              <div style={card}><h3 style={{color:C.navy,marginBottom:"12px"}}>👤 Add New Staff</h3><AddStaffForm staff={staff} setStaff={setStaff} btn={btn} inp={inp} setBackupReminder={setBackupReminder}/></div>
+              <div style={card}><h3 style={{color:C.navy,marginBottom:"12px"}}>👤 Add New Staff</h3><AddStaffForm staff={staff} setStaff={setStaff} masterDefaults={masterDefaults} btn={btn} inp={inp} setBackupReminder={setBackupReminder}/></div>
             </div>
+
+            {/* Staff table */}
             {staff.length>0&&(
               <div style={{...card,marginTop:"18px"}}>
                 <h3 style={{color:C.navy,marginBottom:"12px"}}>👥 Manage Staff ({staff.length})</h3>
                 <table style={{width:"100%",borderCollapse:"collapse"}}>
-                  <thead><tr><TH>ID</TH><TH>Name</TH><TH center>Default Hrs</TH><TH center>OT Limit</TH><TH>Versatility</TH><TH>Actions</TH></tr></thead>
-                  <tbody>{staff.map((s,i)=>{const v=calcVersatility(s);return(<tr key={s.id} style={{background:i%2===0?C.light:C.white}}><TD i={i}><span style={{fontFamily:"monospace",color:C.navy,fontWeight:"700"}}>{s.id}</span></TD><TD i={i}>{s.name}</TD><TD i={i} center>{s.hoursPerDay??7}h</TD><TD i={i} center>{s.overtimeLimit??30}h</TD><TD i={i}><div style={{display:"flex",alignItems:"center",gap:"6px"}}><div style={{background:"#eee",borderRadius:"4px",overflow:"hidden",width:"70px",height:"10px"}}><div style={{width:`${v}%`,background:v>75?C.green:v>50?C.gold:C.red,height:"100%"}}/></div><span style={{fontSize:"12px",fontWeight:"600",color:v>75?C.green:v>50?C.gold:C.red}}>{v}%</span></div></TD><TD i={i}><button onClick={()=>setSelectedStaff({...s})} style={btn(false,C.purple)}>✏️ Edit</button><button onClick={()=>{if(window.confirm(`Remove ${s.name}?`))setStaff(staff.filter(x=>x.id!==s.id));}} style={btn(false,C.red)}>🗑️</button></TD></tr>);})}</tbody>
+                  <thead><tr><TH>ID</TH><TH>Name</TH><TH center>Hrs/Day</TH><TH center>OT Limit</TH><TH>Crops</TH><TH>Actions</TH></tr></thead>
+                  <tbody>{staff.map((s,i)=>{
+                    const crops=s.cropTypes||[];
+                    return(<tr key={s.id} style={{background:i%2===0?C.light:C.white}}>
+                      <TD i={i}><span style={{fontFamily:"monospace",color:C.navy,fontWeight:"700"}}>{s.id}</span></TD>
+                      <TD i={i}>{s.name}</TD>
+                      <TD i={i} center>{s.hoursPerDay??7}h</TD>
+                      <TD i={i} center>{s.overtimeLimit??30}h</TD>
+                      <TD i={i}><span style={{fontSize:"11px",color:crops.length===0?C.green:C.textMid}}>{crops.length===0?"All crops":crops.slice(0,3).join(", ")+(crops.length>3?` +${crops.length-3}`:"")}</span></TD>
+                      <TD i={i}><button onClick={()=>setSelectedStaff({...s})} style={btn(false,C.purple)}>✏️ Edit</button><button onClick={()=>{if(window.confirm(`Remove ${s.name}?`))setStaff(staff.filter(x=>x.id!==s.id));}} style={btn(false,C.red)}>🗑️</button></TD>
+                    </tr>);
+                  })}</tbody>
                 </table>
               </div>
             )}
@@ -939,15 +984,31 @@ function SchedulePage({scheduleData,setScheduleData,dailyAllocation,confirmedWee
     return{demand,crops};
   },[ydpPlans,dailyAllocation,confirmedWeeks,ghNameMap]);
 
+  // Translate simplified crop/activity model → backend {activity,allGreenhouses,cropTypes} format
+  const expandStaff=React.useCallback((s,allActivities,allCrops)=>{
+    const sCrops=s.cropTypes?.length?s.cropTypes:allCrops;
+    const cActs=s.cropActivities||{};
+    const actMap={};
+    sCrops.forEach(crop=>{
+      const acts=(!cActs[crop]||cActs[crop].length===0)?allActivities:(cActs[crop]||allActivities);
+      acts.forEach(act=>{if(!actMap[act])actMap[act]=[];actMap[act].push(crop);});
+    });
+    const activities=Object.entries(actMap).map(([act,crops])=>({activity:act,allGreenhouses:true,cropTypes:crops,ghCropTypes:{}}));
+    return{...s,activities};
+  },[]);
+
   // Run CP-SAT optimiser
   const runOptimiser=async()=>{
     if(!selWeek)return;
     setRunning(true);
     const{demand,crops}=aggregateDemand(selWeek);
+    const allActNames=[...new Set(Object.values(demand).flatMap(a=>Object.keys(a)))];
+    const allCropNames=[...new Set(Object.values(crops).flat())];
+    const expandedStaff=staff.map(s=>expandStaff(s,allActNames.length?allActNames:["All"],allCropNames.length?allCropNames:["All"]));
     try{
       const res=await axios.post(`${API}/schedule-optimise`,{
         dailyDemand:demand,
-        staff,absences,clusters,clusterTransitions,quarantine,
+        staff:expandedStaff,absences,clusters,clusterTransitions,quarantine,
         ghCropsMap:crops,
         currentDate:new Date().toISOString(),
         timeLimitSecs:10,
@@ -2405,61 +2466,49 @@ function BulkCSVImport({staff,setStaff,API,btn,inp,C,setBackupReminder}){
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// STAFF PROFILE POPUP
+// STAFF PROFILE POPUP — simplified: crops + activities per crop
 // ═══════════════════════════════════════════════════════════════════════════════
 function StaffProfilePopup({selectedStaff,setSelectedStaff,staff,setStaff,activities,ghNames,ghList,cropTypes,absences,calcVersatility,btn,inp,C,ALL_DAYS,DAY_SHORT,setBackupReminder}){
-  const [expandedAct,setExpandedAct]=useState(null);
   const update=(updates)=>{const u={...selectedStaff,...updates};setSelectedStaff(u);setStaff(staff.map(s=>s.id===selectedStaff.id?u:s));setBackupReminder(true);};
 
-  // Migrate old flat model to new per-GH model on the fly
-  const migrateActObj=(a)=>{
-    if(typeof a==="string")return{activity:a,allGreenhouses:true,greenhouses:[...ghNames],ghCropTypes:{}};
-    // old model had flat cropTypes — migrate to ghCropTypes
-    if(a.cropTypes&&!a.ghCropTypes){
-      const ghCropTypes={};
-      (a.allGreenhouses?ghNames:a.greenhouses||[]).forEach(gh=>{ghCropTypes[gh]=[...a.cropTypes];});
-      return{...a,ghCropTypes,cropTypes:undefined};
+  // cropTypes: [] means ALL crops; non-empty means those specific crops
+  const staffCrops=selectedStaff.cropTypes||[];
+  const allCrops=staffCrops.length===0;
+  const effectiveCrops=allCrops?cropTypes:staffCrops;
+
+  // cropActivities: {cropName: [] (=all) | ["Act1","Act2"]}
+  const cropActs=selectedStaff.cropActivities||{};
+  const getActsForCrop=(crop)=>{const a=cropActs[crop];return(!a||a.length===0)?activities:a;};
+  const allActsForCrop=(crop)=>(!cropActs[crop]||cropActs[crop].length===0);
+
+  const toggleCrop=(crop,checked)=>{
+    let newCrops;
+    if(allCrops){
+      // Was "all" — switching to explicit: keep all except unchecked
+      newCrops=checked?cropTypes:cropTypes.filter(c=>c!==crop);
+    } else {
+      newCrops=checked?[...staffCrops,crop]:staffCrops.filter(c=>c!==crop);
     }
-    if(!a.ghCropTypes)return{...a,ghCropTypes:{}};
-    return a;
+    // If all crops selected, store as []
+    const final=newCrops.length===cropTypes.length?[]:newCrops;
+    update({cropTypes:final});
   };
 
-  const staffActs=(selectedStaff.activities||[]).map(migrateActObj);
-  const hasActivity=(actName)=>staffActs.some(a=>a.activity===actName);
+  const toggleAllCrops=()=>update({cropTypes:[]});
 
-  const toggleActivity=(actName,checked)=>{
-    // When adding: default all GHs, and for each GH default all its crops
-    const defaultGhCropTypes={};
-    ghNames.forEach(gh=>{
-      const ghObj=ghList.find(g=>g.name===gh);
-      defaultGhCropTypes[gh]=[...(ghObj?.cropTypes||cropTypes)];
-    });
-    const newActs=checked
-      ?[...staffActs,{activity:actName,allGreenhouses:true,greenhouses:[...ghNames],ghCropTypes:defaultGhCropTypes}]
-      :staffActs.filter(a=>a.activity!==actName);
-    if(!checked&&expandedAct===actName)setExpandedAct(null);
-    update({activities:newActs});
+  const toggleActForCrop=(crop,act,checked)=>{
+    const cur=allActsForCrop(crop)?[...activities]:(cropActs[crop]||[]);
+    const next=checked?[...cur,act]:cur.filter(a=>a!==act);
+    const final=next.length===activities.length?[]:next;
+    update({cropActivities:{...cropActs,[crop]:final}});
   };
+  const toggleAllActsForCrop=(crop)=>update({cropActivities:{...cropActs,[crop]:[]}});
 
-  const updateActObj=(actName,changes)=>update({activities:staffActs.map(a=>a.activity===actName?{...a,...changes}:a)});
-  const getActObj=(actName)=>staffActs.find(a=>a.activity===actName)||null;
-
-  // Get crops for a specific GH under an activity
-  const getGhCrops=(actObj,gh)=>actObj.ghCropTypes?.[gh]??[];
-  const setGhCrops=(actName,gh,crops)=>{
-    const actObj=getActObj(actName);
-    if(!actObj)return;
-    updateActObj(actName,{ghCropTypes:{...actObj.ghCropTypes,[gh]:crops}});
-  };
-
-  // Which GHs are active for this activity
-  const getActiveGHs=(actObj)=>actObj.allGreenhouses?ghNames:(actObj.greenhouses||[]);
-
-  // Summary for display
-  const actSummary=(actObj)=>{
-    const ghs=getActiveGHs(actObj);
-    const totalCrops=new Set(ghs.flatMap(gh=>getGhCrops(actObj,gh))).size;
-    return`${actObj.allGreenhouses?"All GHs":`${ghs.length} GHs`} · ${totalCrops} crops`;
+  // Build backend-compatible activities array for display summary
+  const summaryActCount=()=>{
+    const s=new Set();
+    effectiveCrops.forEach(crop=>getActsForCrop(crop).forEach(a=>s.add(a)));
+    return s.size;
   };
 
   const v=calcVersatility(selectedStaff);
@@ -2467,155 +2516,102 @@ function StaffProfilePopup({selectedStaff,setSelectedStaff,staff,setStaff,activi
 
   return(
     <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.65)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000}}>
-      <div style={{background:"white",borderRadius:"14px",padding:"28px",maxWidth:"900px",width:"95%",maxHeight:"92vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"20px"}}>
+      <div style={{background:"white",borderRadius:"14px",padding:"28px",maxWidth:"820px",width:"95%",maxHeight:"92vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
+
+        {/* Header */}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"18px"}}>
           <div><h2 style={{color:C.navy,margin:"0 0 4px 0"}}>{selectedStaff.name}</h2><span style={{fontFamily:"monospace",color:C.textLight,fontSize:"13px"}}>{selectedStaff.id}</span></div>
           <button onClick={()=>setSelectedStaff(null)} style={btn(false,C.red)}>✕ Close</button>
         </div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"10px",marginBottom:"22px"}}>
-          {[[v+"%","Versatility",C.blue,"#eaf2ff"],[absCount,"Absent Days",C.red,"#fdf2f2"],[selectedStaff.hoursPerDay??7,"Default Hrs/Day",C.green,"#f0fff4"],[selectedStaff.overtimeLimit??30,"OT Limit/Wk",C.purple,"#f8f4ff"]].map(([val,label,color,bg])=>(
-            <div key={label} style={{background:bg,padding:"12px",borderRadius:"8px",textAlign:"center"}}><div style={{fontSize:"22px",fontWeight:"800",color}}>{val}</div><div style={{fontSize:"11px",color:C.textLight,marginTop:"2px"}}>{label}</div></div>
+
+        {/* Stats */}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"10px",marginBottom:"18px"}}>
+          {[[`${effectiveCrops.length===cropTypes.length?"All":effectiveCrops.length} crops`,"Crops",C.green,"#f0fff4"],[`${summaryActCount()} acts`,"Activities",C.teal,"#f0fdfb"],[selectedStaff.hoursPerDay??7,"Hrs/Day",C.blue,"#eaf2ff"],[selectedStaff.overtimeLimit??30,"OT Limit/Wk",C.purple,"#f8f4ff"]].map(([val,label,color,bg])=>(
+            <div key={label} style={{background:bg,padding:"10px",borderRadius:"8px",textAlign:"center"}}><div style={{fontSize:"18px",fontWeight:"800",color}}>{val}</div><div style={{fontSize:"11px",color:C.textLight,marginTop:"2px"}}>{label}</div></div>
           ))}
         </div>
-        <div style={{marginBottom:"20px",padding:"14px",background:"#fafafa",borderRadius:"8px",border:`1px solid ${C.border}`}}>
-          <h4 style={{color:C.navy,margin:"0 0 10px 0",fontSize:"14px"}}>✏️ Name, ID & Settings</h4>
+
+        {/* Basic info + hours */}
+        <div style={{marginBottom:"18px",padding:"14px",background:"#fafafa",borderRadius:"8px",border:`1px solid ${C.border}`}}>
           <div style={{display:"flex",gap:"10px",flexWrap:"wrap",marginBottom:"10px"}}>
             <input value={selectedStaff.id} onChange={e=>update({id:e.target.value})} style={{...inp,flex:1,minWidth:"100px"}} placeholder="Staff ID"/>
             <input value={selectedStaff.name} onChange={e=>update({name:e.target.value})} style={{...inp,flex:2,minWidth:"150px"}} placeholder="Full Name"/>
           </div>
-          <div style={{display:"flex",gap:"16px",flexWrap:"wrap"}}>
-            <div style={{display:"flex",alignItems:"center",gap:"6px"}}><label style={{fontSize:"13px",color:C.textMid}}>Default hrs/day:</label><input type="number" min="0" max="16" value={selectedStaff.hoursPerDay??7} onChange={e=>update({hoursPerDay:parseInt(e.target.value)||0})} style={{...inp,width:"55px",textAlign:"center"}}/></div>
-            <div style={{display:"flex",alignItems:"center",gap:"6px"}}><label style={{fontSize:"13px",color:C.textMid}}>OT limit/week:</label><input type="number" min="0" max="80" value={selectedStaff.overtimeLimit??30} onChange={e=>update({overtimeLimit:parseInt(e.target.value)||0})} style={{...inp,width:"55px",textAlign:"center"}}/></div>
+          <div style={{display:"flex",gap:"16px",flexWrap:"wrap",marginBottom:"14px"}}>
+            <div style={{display:"flex",alignItems:"center",gap:"6px"}}>
+              <label style={{fontSize:"13px",color:C.textMid}}>Daily max hrs:</label>
+              <input type="number" min="0" max="16" value={selectedStaff.hoursPerDay??7} onChange={e=>update({hoursPerDay:parseInt(e.target.value)||0})} style={{...inp,width:"55px",textAlign:"center"}}/>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:"6px"}}>
+              <label style={{fontSize:"13px",color:C.textMid}}>OT limit/week:</label>
+              <input type="number" min="0" max="80" value={selectedStaff.overtimeLimit??30} onChange={e=>update({overtimeLimit:parseInt(e.target.value)||0})} style={{...inp,width:"55px",textAlign:"center"}}/>
+            </div>
           </div>
-        </div>
-        <div style={{marginBottom:"20px"}}>
-          <h4 style={{color:C.navy,marginBottom:"10px",fontSize:"14px"}}>🕐 Hours Per Day (7-day week)</h4>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:"8px"}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:"6px"}}>
             {ALL_DAYS.map(day=>{const isWE=["Saturday","Sunday"].includes(day);return(
               <div key={day} style={{textAlign:"center"}}>
-                <div style={{fontSize:"11px",color:isWE?C.orange:C.textMid,marginBottom:"4px",fontWeight:isWE?"700":"400"}}>{DAY_SHORT[day]}</div>
-                <input type="number" min="0" max="16" value={selectedStaff.dayHours?.[day]??(isWE?0:selectedStaff.hoursPerDay??7)}
+                <div style={{fontSize:"10px",color:isWE?C.orange:C.textMid,marginBottom:"3px",fontWeight:isWE?"700":"400"}}>{DAY_SHORT[day]}</div>
+                <input type="number" min="0" max="16"
+                  value={selectedStaff.dayHours?.[day]??(isWE?0:selectedStaff.hoursPerDay??7)}
                   onChange={e=>update({dayHours:{...(selectedStaff.dayHours||{}),[day]:parseInt(e.target.value)||0}})}
-                  style={{...inp,width:"100%",textAlign:"center",background:isWE?"#fff8f0":"white",borderColor:isWE?C.orange:C.border}}/>
+                  style={{...inp,width:"100%",textAlign:"center",background:isWE?"#fff8f0":"white",borderColor:isWE?C.orange:C.border,padding:"4px 2px"}}/>
               </div>
             );})}
           </div>
-          <p style={{color:C.textLight,fontSize:"12px",marginTop:"8px"}}>Set 0 for days not worked. Use Absence tab for one-off weekly changes.</p>
+          <p style={{color:C.textLight,fontSize:"11px",marginTop:"6px"}}>Set 0 for days not worked. Use Absence tab for one-off changes.</p>
         </div>
 
-        {/* ── Activities with per-GH crop types ── */}
-        <div style={{marginBottom:"20px"}}>
-          <h4 style={{color:C.navy,marginBottom:"4px",fontSize:"14px"}}>⚙️ Activities, Greenhouses & Crop Types</h4>
-          <p style={{color:C.textMid,fontSize:"12px",marginBottom:"12px"}}>
-            Tick an activity → choose which greenhouses → for each greenhouse choose which crop types. By default all greenhouses and all crops are selected.
-          </p>
-          <div style={{display:"flex",flexDirection:"column",gap:"6px"}}>
-            {activities.map(actName=>{
-              const isChecked=hasActivity(actName);
-              const actObj=getActObj(actName);
-              const isExpanded=expandedAct===actName&&isChecked;
-              const activeGHs=actObj?getActiveGHs(actObj):[];
+        {/* Crops section */}
+        <div style={{marginBottom:"18px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:"12px",marginBottom:"10px"}}>
+            <h4 style={{color:C.navy,margin:0,fontSize:"14px"}}>🌱 Crops</h4>
+            <label style={{display:"flex",alignItems:"center",gap:"5px",cursor:"pointer",background:allCrops?"#dcfce7":"#f3f4f6",padding:"4px 12px",borderRadius:"20px",border:`1px solid ${allCrops?C.green:C.border}`,fontSize:"12px",fontWeight:"600",color:allCrops?C.green:C.textMid}}>
+              <input type="checkbox" checked={allCrops} onChange={toggleAllCrops} style={{accentColor:C.green}}/>
+              All Crops
+            </label>
+            <span style={{fontSize:"11px",color:C.textLight}}>Greenhouse is auto-assigned from crop allocation</span>
+          </div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:"6px"}}>
+            {cropTypes.map(crop=>{
+              const sel=allCrops||staffCrops.includes(crop);
               return(
-                <div key={actName} style={{border:`1px solid ${isChecked?C.teal:C.border}`,borderRadius:"8px",overflow:"hidden",background:isChecked?"#f0fdfb":"#fafafa"}}>
-                  {/* Activity row */}
-                  <div style={{display:"flex",alignItems:"center",gap:"10px",padding:"10px 14px"}}>
-                    <input type="checkbox" checked={isChecked} onChange={e=>toggleActivity(actName,e.target.checked)} style={{width:"16px",height:"16px",cursor:"pointer",accentColor:C.teal}}/>
-                    <span style={{flex:1,fontSize:"13px",fontWeight:isChecked?"600":"400",color:isChecked?C.navy:C.textMid}}>{actName}</span>
-                    {isChecked&&actObj&&<span style={{fontSize:"11px",color:C.textLight}}>{actSummary(actObj)}</span>}
-                    {isChecked&&<button onClick={()=>setExpandedAct(isExpanded?null:actName)} style={{background:"none",border:`1px solid ${C.teal}`,color:C.teal,borderRadius:"4px",padding:"2px 10px",cursor:"pointer",fontSize:"12px"}}>{isExpanded?"▲ Hide":"▼ Configure"}</button>}
+                <label key={crop} style={{display:"flex",alignItems:"center",gap:"5px",cursor:"pointer",background:sel?"#d1fae5":"white",padding:"6px 12px",borderRadius:"8px",border:`1px solid ${sel?C.green:C.border}`,fontSize:"13px",fontWeight:sel?"600":"400",color:sel?C.navy:C.textMid}}>
+                  <input type="checkbox" checked={sel} onChange={e=>toggleCrop(crop,e.target.checked)} style={{accentColor:C.green}}/>
+                  {crop}
+                </label>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Activities per crop */}
+        <div style={{marginBottom:"18px"}}>
+          <h4 style={{color:C.navy,margin:"0 0 10px 0",fontSize:"14px"}}>⚙️ Activities per Crop</h4>
+          <p style={{fontSize:"12px",color:C.textMid,marginBottom:"10px"}}>Default is all activities for each crop. Untick to restrict.</p>
+          <div style={{display:"flex",flexDirection:"column",gap:"8px"}}>
+            {effectiveCrops.map(crop=>{
+              const allActs=allActsForCrop(crop);
+              const selActs=allActs?activities:(cropActs[crop]||[]);
+              return(
+                <div key={crop} style={{border:`1px solid ${C.border}`,borderRadius:"8px",padding:"10px 14px",background:"#fafafa"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"8px",flexWrap:"wrap"}}>
+                    <span style={{fontWeight:"700",color:C.navy,fontSize:"13px",minWidth:"140px"}}>{crop}</span>
+                    <label style={{display:"flex",alignItems:"center",gap:"4px",cursor:"pointer",background:allActs?"#e0f2fe":"#f3f4f6",padding:"3px 10px",borderRadius:"12px",border:`1px solid ${allActs?C.teal:C.border}`,fontSize:"12px",fontWeight:"600",color:allActs?C.teal:C.textMid}}>
+                      <input type="checkbox" checked={allActs} onChange={()=>toggleAllActsForCrop(crop)} style={{accentColor:C.teal}}/>
+                      All Activities
+                    </label>
                   </div>
-
-                  {/* Expanded config */}
-                  {isExpanded&&actObj&&(
-                    <div style={{borderTop:"1px solid #c8ede8",padding:"14px",background:"white"}}>
-
-                      {/* Step 1: Greenhouse selection */}
-                      <div style={{marginBottom:"16px"}}>
-                        <div style={{display:"flex",alignItems:"center",gap:"12px",marginBottom:"10px"}}>
-                          <span style={{fontSize:"13px",fontWeight:"700",color:C.navy}}>Step 1 — Greenhouses:</span>
-                          <label style={{display:"flex",alignItems:"center",gap:"5px",fontSize:"13px",cursor:"pointer",background:actObj.allGreenhouses?"#e8fdf5":"#f8f9fa",padding:"4px 10px",borderRadius:"6px",border:`1px solid ${actObj.allGreenhouses?C.teal:C.border}`}}>
-                            <input type="checkbox" checked={actObj.allGreenhouses}
-                              onChange={e=>{
-                                const allGH=e.target.checked;
-                                const newGHs=allGH?[...ghNames]:actObj.greenhouses||[];
-                                // When switching to all, seed ghCropTypes for any missing GHs
-                                const newGhCropTypes={...actObj.ghCropTypes};
-                                if(allGH){
-                                  ghNames.forEach(gh=>{
-                                    if(!newGhCropTypes[gh]){
-                                      const ghObj=ghList.find(g=>g.name===gh);
-                                      newGhCropTypes[gh]=[...(ghObj?.cropTypes||cropTypes)];
-                                    }
-                                  });
-                                }
-                                updateActObj(actName,{allGreenhouses:allGH,greenhouses:newGHs,ghCropTypes:newGhCropTypes});
-                              }}
-                              style={{accentColor:C.teal}}/>
-                            <span style={{fontWeight:"600",color:actObj.allGreenhouses?C.teal:C.textMid}}>All Greenhouses</span>
+                  {!allActs&&(
+                    <div style={{display:"flex",flexWrap:"wrap",gap:"5px"}}>
+                      {activities.map(act=>{
+                        const sel=selActs.includes(act);
+                        return(
+                          <label key={act} style={{display:"flex",alignItems:"center",gap:"4px",cursor:"pointer",background:sel?"#e0f2fe":"white",padding:"4px 10px",borderRadius:"6px",border:`1px solid ${sel?C.teal:C.border}`,fontSize:"12px",color:sel?C.navy:C.textMid,fontWeight:sel?"600":"400"}}>
+                            <input type="checkbox" checked={sel} onChange={e=>toggleActForCrop(crop,act,e.target.checked)} style={{accentColor:C.teal}}/>
+                            {act}
                           </label>
-                        </div>
-                        {!actObj.allGreenhouses&&(
-                          <div style={{display:"flex",flexWrap:"wrap",gap:"5px"}}>
-                            {ghNames.map(gh=>{
-                              const selected=(actObj.greenhouses||[]).includes(gh);
-                              return(
-                                <label key={gh} style={{display:"flex",alignItems:"center",gap:"4px",background:selected?"#d5f0ff":"white",padding:"5px 10px",borderRadius:"6px",cursor:"pointer",border:`1px solid ${selected?C.blue:C.border}`,fontSize:"12px",fontWeight:selected?"600":"400"}}>
-                                  <input type="checkbox" checked={selected}
-                                    onChange={e=>{
-                                      const ghs=actObj.greenhouses||[];
-                                      const newGHs=e.target.checked?[...ghs,gh]:ghs.filter(g=>g!==gh);
-                                      // Seed crops for newly added GH
-                                      const newGhCropTypes={...actObj.ghCropTypes};
-                                      if(e.target.checked&&!newGhCropTypes[gh]){
-                                        const ghObj=ghList.find(g=>g.name===gh);
-                                        newGhCropTypes[gh]=[...(ghObj?.cropTypes||cropTypes)];
-                                      }
-                                      updateActObj(actName,{greenhouses:newGHs,ghCropTypes:newGhCropTypes});
-                                    }}
-                                    style={{accentColor:C.blue}}/>{gh}
-                                </label>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Step 2: Per-GH crop types */}
-                      <div>
-                        <div style={{fontSize:"13px",fontWeight:"700",color:C.navy,marginBottom:"10px"}}>Step 2 — Crop Types per Greenhouse:</div>
-                        <p style={{fontSize:"12px",color:C.textMid,marginBottom:"10px"}}>For each greenhouse, select which crop types this staff can work with for this activity. By default all crops are selected.</p>
-                        <div style={{display:"flex",flexDirection:"column",gap:"8px"}}>
-                          {activeGHs.map(gh=>{
-                            const ghObj=ghList.find(g=>g.name===gh);
-                            // Show only crops that belong to this GH (if GH has crops defined), else show all
-                            const availableCrops=cropTypes; // Always show all crop types — user picks which apply per GH
-                            const selectedCrops=getGhCrops(actObj,gh);
-                            return(
-                              <div key={gh} style={{background:"#fafafa",border:`1px solid ${C.border}`,borderRadius:"8px",padding:"10px 12px"}}>
-                                <div style={{display:"flex",alignItems:"center",gap:"10px",flexWrap:"wrap"}}>
-                                  <span style={{fontWeight:"700",color:C.navy,fontSize:"13px",minWidth:"120px"}}>{gh}</span>
-                                  <div style={{display:"flex",gap:"5px",flexWrap:"wrap"}}>
-                                    {availableCrops.map(ct=>{
-                                      const isSel=selectedCrops.includes(ct);
-                                      return(
-                                        <label key={ct} style={{display:"flex",alignItems:"center",gap:"3px",background:isSel?"#fdebd0":"white",padding:"3px 8px",borderRadius:"5px",cursor:"pointer",border:`1px solid ${isSel?C.orange:C.border}`,fontSize:"12px"}}>
-                                          <input type="checkbox" checked={isSel}
-                                            onChange={e=>{
-                                              const newCrops=e.target.checked?[...selectedCrops,ct]:selectedCrops.filter(c=>c!==ct);
-                                              setGhCrops(actName,gh,newCrops);
-                                            }}
-                                            style={{accentColor:C.orange}}/>{ct}
-                                        </label>
-                                      );
-                                    })}
-                                  </div>
-                                  {availableCrops.length===0&&<span style={{fontSize:"12px",color:C.textLight,fontStyle:"italic"}}>No crops assigned to this GH yet — go to Edit tab to add crop types to greenhouses.</span>}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -2624,7 +2620,7 @@ function StaffProfilePopup({selectedStaff,setSelectedStaff,staff,setStaff,activi
           </div>
         </div>
 
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:"10px",paddingTop:"14px",borderTop:`1px solid ${C.border}`}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:"14px",borderTop:`1px solid ${C.border}`}}>
           <button onClick={()=>{if(window.confirm(`Remove ${selectedStaff.name}?`)){setStaff(staff.filter(x=>x.id!==selectedStaff.id));setSelectedStaff(null);}}} style={btn(false,C.red)}>🗑️ Remove Staff</button>
           <button onClick={()=>setSelectedStaff(null)} style={btn(false,C.green)}>✓ Done</button>
         </div>
@@ -2636,25 +2632,23 @@ function StaffProfilePopup({selectedStaff,setSelectedStaff,staff,setStaff,activi
 // ═══════════════════════════════════════════════════════════════════════════════
 // ADD STAFF FORM
 // ═══════════════════════════════════════════════════════════════════════════════
-function AddStaffForm({staff,setStaff,btn,inp,setBackupReminder}){
-  const [name,setName]=useState("");const [id,setId]=useState("");const [hours,setHours]=useState(7);
+function AddStaffForm({staff,setStaff,masterDefaults,btn,inp,setBackupReminder}){
+  const [name,setName]=useState("");const [id,setId]=useState("");
+  const h=masterDefaults?.hoursPerDay??7;const ot=masterDefaults?.overtimeLimit??30;
   const add=()=>{
     if(!name.trim()||!id.trim())return alert("Please enter both Staff ID and Name");
     if(staff.find(s=>s.id===id.trim()))return alert("Staff ID already exists");
-    setStaff([...staff,{id:id.trim(),name:name.trim(),hoursPerDay:parseInt(hours)||7,dayHours:{Monday:parseInt(hours)||7,Tuesday:parseInt(hours)||7,Wednesday:parseInt(hours)||7,Thursday:parseInt(hours)||7,Friday:parseInt(hours)||7,Saturday:0,Sunday:0},overtimeLimit:30,activities:[],versatility:0}]);
-    setName("");setId("");setHours(7);
+    setStaff([...staff,{id:id.trim(),name:name.trim(),hoursPerDay:h,dayHours:{Monday:h,Tuesday:h,Wednesday:h,Thursday:h,Friday:h,Saturday:0,Sunday:0},overtimeLimit:ot,cropTypes:[],cropActivities:{},activities:[]}]);
+    setName("");setId("");
     setBackupReminder(true);
   };
   return(
     <div>
       <input value={id} onChange={e=>setId(e.target.value)} style={{...inp,width:"100%",marginBottom:"8px",boxSizing:"border-box"}} placeholder="Staff ID (e.g. STF001)"/>
       <input value={name} onChange={e=>setName(e.target.value)} style={{...inp,width:"100%",marginBottom:"8px",boxSizing:"border-box"}} placeholder="Full Name"/>
-      <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"12px"}}>
-        <label style={{fontSize:"13px",color:"#666"}}>Default hours/day:</label>
-        <input type="number" min="0" max="16" value={hours} onChange={e=>setHours(e.target.value)} style={{...inp,width:"65px",textAlign:"center"}}/>
-      </div>
+      <p style={{fontSize:"12px",color:"#666",marginBottom:"12px"}}>Hours/day: <strong>{h}h</strong> · OT limit: <strong>{ot}h/wk</strong> (from master defaults — adjust after adding)</p>
       <button onClick={add} style={btn(false,"#27ae60")}>+ Add Staff Member</button>
-      <p style={{color:"#888",fontSize:"12px",marginTop:"8px"}}>After adding, click Edit in Manage Staff to assign activities, greenhouses and crop types.</p>
+      <p style={{color:"#888",fontSize:"12px",marginTop:"8px"}}>After adding, click ✏️ Edit to set crops and activities. Default: all crops + all activities.</p>
     </div>
   );
 }
