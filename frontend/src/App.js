@@ -1880,6 +1880,29 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
     }
   };
 
+  // Reset ALL unconfirmed allocations across every crop type and recompute from scratch
+  const resetAllDemand=()=>{
+    const cropNames=[...new Set(ydpPlans.map(p=>p.cropName))].filter(Boolean);
+    let updates={};
+    cropNames.forEach(cropName=>{
+      ydpPlans.filter(p=>p.cropName===cropName).forEach(plan=>{
+        for(let wi=0;wi<plan.cycleWeeks;wi++){
+          if(confirmedWeeks[`${plan.id}__w${wi}`])continue;
+          const{key,result}=allocPlanWeek(plan,wi);
+          updates[key]=result;
+        }
+      });
+    });
+    // Replace all non-confirmed allocations; keep confirmed ones only
+    setDailyAllocation(prev=>{
+      const base={};
+      Object.keys(prev).forEach(k=>{if(confirmedWeeks[k])base[k]=prev[k];});
+      return{...base,...updates};
+    });
+    if(setDemandVersion)setDemandVersion(v=>v+1);
+    alert(`✅ Demand recalculated — ${Object.keys(updates).length} week(s) reset.\n\nAll unconfirmed weeks now use Mon–Fri only with correct day allocations.`);
+  };
+
   // Auto-allocate current week when it has no data yet
   React.useEffect(()=>{
     if(!selPlan||!allocKey||isConfirmed)return;
@@ -1968,6 +1991,9 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
                 ↻ Re-apply to Unconfirmed Weeks
               </button>
             )}
+            <button onClick={resetAllDemand} style={{...btn(true,"#d97706"),padding:"10px 20px",fontSize:"13px",fontWeight:"700"}}>
+              ↺ Reset ALL crops
+            </button>
           </div>
           <div style={{display:"flex",gap:0,height:"calc(100vh - 290px)",borderRadius:"10px",overflow:"hidden",border:`1px solid ${C.border}`,boxShadow:"0 2px 12px rgba(0,0,0,0.08)"}}>
             {/* Crop Type sidebar */}
@@ -2074,6 +2100,11 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
       {/* ══ WEEKLY PLANNER ══ */}
       {demandSubTab==="weekly"&&(
         <div>
+          {/* Reset banner — always visible so user can fix stale data */}
+          <div style={{marginBottom:"12px",background:"#fef3c7",border:"1px solid #fcd34d",borderRadius:"8px",padding:"10px 16px",display:"flex",alignItems:"center",gap:"14px",flexWrap:"wrap"}}>
+            <span style={{flex:1,fontSize:"12px",color:"#92400e",fontWeight:500}}>⚠️ <strong>If demand hours look wrong</strong> (wrong totals, weekend allocations, or not matching YDP) — click Reset to wipe stale data and recompute correctly.</span>
+            <button onClick={resetAllDemand} style={{...btn(true,"#d97706"),padding:"10px 22px",fontSize:"13px",fontWeight:"800",boxShadow:"0 0 0 3px #fcd34d88",whiteSpace:"nowrap"}}>↺ Reset & Recalculate All Demand</button>
+          </div>
           {/* Deadline banner */}
           {(isAmber||isRed)&&(
             <div style={{background:isRed?"#fee2e2":"#fef3c7",border:`1px solid ${isRed?"#fca5a5":"#fcd34d"}`,borderRadius:"8px",padding:"10px 16px",marginBottom:"14px",display:"flex",alignItems:"center",gap:"10px"}}>
