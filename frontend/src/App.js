@@ -1710,10 +1710,10 @@ function DemandPage({wsHolidays,setWsHolidays,dailyAllocation,setDailyAllocation
       seen[p.ghId].plans.push(p);
     });
     return Object.values(seen);
-  },[ydpPlans.length]);
+  },[demandVersion]);
 
   // Standards tab — unique crop type list (from YDP plans)
-  const stdCropList=React.useMemo(()=>[...new Set(ydpPlans.map(p=>p.cropName))].filter(Boolean).sort(),[ydpPlans.length]);
+  const stdCropList=React.useMemo(()=>[...new Set(ydpPlans.map(p=>p.cropName))].filter(Boolean).sort(),[demandVersion]);
 
   // Auto-select first crop type for standards tab
   React.useEffect(()=>{
